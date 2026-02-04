@@ -1,0 +1,236 @@
+---
+title: "var_description"
+author: "Loraine_Dicko"
+date: "2026-02-02"
+output: html_document
+---
+
+```{r  message = FALSE,warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(gridExtra)
+library(ggfortify) 
+library(rsample)   
+library(broom)
+library(Metrics)
+library(knitr)
+library(kableExtra)
+
+```
+
+
+## Dataset
+## Description
+
+```{r eval=TRUE}
+train <- read.csv("train_ISF.csv", stringsAsFactors = FALSE)
+
+# Le nombre d'asset
+length(unique(train$asset_id))
+
+```
+
+## summary  
+```{r summary-numeric, message=FALSE, warning=FALSE}}
+var_numeriques <- train %>% 
+  select(where(is.numeric))
+
+tab <- var_numeriques %>%
+  summarise(across(
+    everything(),
+    list(
+      Min = ~min(., na.rm = TRUE),
+      Median = ~median(., na.rm = TRUE),
+      Max = ~max(., na.rm = TRUE)
+    ),
+    .names = "{.col}__{.fn}"
+  )) %>%
+  pivot_longer(everything(),
+               names_to = c("Variable", "Stat"),
+               names_sep = "__",
+               values_to = "Value") %>%
+  pivot_wider(names_from = Stat, values_from = Value) %>%
+  arrange(Variable) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4)))
+
+tab %>%
+  kable(caption = "Résumé des variables numériques : Min, Médiane, Max", align = "l") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover", "condensed")) %>%
+  scroll_box(width = "100%", height = "450px")
+
+
+
+
+```
+```{r  message = FALSE,warning=FALSE}
+train %>%
+  filter(realized_vol_mid1 == 2484930) 
+
+train <- train %>%
+  filter(abs(realized_vol_mid1 - 2484930) > 1e-6)
+
+```
+### Bon on remarque clairement des outliers (valeurs extremes) on discutera de comment les traiter ( imputation, supression)
+
+
+
+## Histogrammes
+
+```{r histograms, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+vars <- c("call_volume", "put_volume", "call_oi", "put_oi", "strike_dispersion", "total_contracts")
+
+train_long <- train %>%
+  select(all_of(intersect(vars, names(train)))) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  mutate(Value_log = log1p(Value)) 
+
+ggplot(train_long, aes(x = Value_log)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p) — Variables d'activité et de taille",
+    x = "log(1 + valeur)", y = "Fréquence"
+  )
+```
+
+
+```{r boxplot, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+rv_cols <- grep("^realized_vol_", names(train), value = TRUE)
+
+for (v in rv_cols) {
+  p <- ggplot(train, aes(y = log(.data[[v]]))) +
+    geom_boxplot(fill = "grey70", outlier_alpha = 0.2) +
+    labs(
+      title = paste0("Boxplot de ", v),
+      x = "",
+      y = v
+    ) +
+    theme_minimal()
+  
+  print(p)
+}
+
+```
+
+
+
+
+
+
+
+
+```{r histograms, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+rv_cols <- grep("^realized_vol_", names(train), value = TRUE)
+
+for (v in rv_cols) {
+  p <- ggplot(train, aes(x = log(.data[[v]]))) +
+    geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
+    labs(
+      title = paste0("Histogramme de ",v),
+      x     = paste0(v),
+      y     = "Frequence"
+    ) +
+    theme_minimal()
+  
+  print(p)
+}
+
+
+```
+
+```{r histograms, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+ggplot(train, aes(x = market_vol_index)) +
+  geom_histogram(bins = 50, fill = "grey70", color = "white") +
+  labs(title = "Histogramme du market_vol_index",
+       x = "market_vol_index",
+       y = "Frequence") +
+  theme_minimal()
+
+```
+
+
+"""""
+
+```{r barplots, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+vars_1 <- c("maturity_count")
+
+train_long <- train %>%
+  select(all_of(intersect(vars_1, names(train)))) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") 
+
+ggplot(train, aes(x = factor(maturity_count))) +
+  geom_bar(fill = "#2C7FB8", color = "white") +
+  labs(title = "Barplot de maturity_count",
+       x = "maturity_count", y = "Nombre d'observations") +
+  theme_minimal()
+```
+
+
+
+
+```{r serie temporelle, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+train2 <- train %>%
+  mutate(obs_date = as.Date(obs_date))
+
+ggplot(train2, aes(x = obs_date, y = market_vol_index)) +
+  geom_line(color = "red") +
+  labs(title = "Evolution temporelle du market_vol_index",
+       x = "Date",
+       y = "market_vol_index") +
+  theme_minimal()
+
+```
+
+
+
+```{r serie temporelle, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+ggplot(train, aes(x = implied_vol_ref)) +
+  geom_histogram(bins = 50, fill = "grey70", color = "white") +
+  labs(title = "Histogramme de implied_vol_ref",
+       x = "implied_vol_ref",
+       y = "Frequence") +
+  theme_minimal()
+
+```
+
+
+
+
+
+
+
+
+
