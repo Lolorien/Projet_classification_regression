@@ -18,15 +18,53 @@ library(kableExtra)
 
 ```
 
+## 1. Introduction et contexte de l’étude
 
-## Dataset
-## Description
+Les marchés d’options jouent un rôle central dans la formation des anticipations de marché,
+notamment à travers la **volatilité implicite**, qui reflète les attentes des investisseurs quant
+à la variabilité future des prix des actifs sous-jacents.
+
+Contrairement à la volatilité réalisée, qui est calculée à partir de données historiques de prix,
+la volatilité implicite est une mesure **forward-looking**, extraite directement des prix des options.
+Elle incorpore ainsi à la fois l’information disponible, l’aversion au risque et les anticipations
+collectives des acteurs de marché.
+
+L’objectif de ce projet est de **construire un modèle prédictif de la volatilité implicite de référence**
+(`implied_vol_ref`) à partir :
+- des caractéristiques du marché des options,
+- des mesures de volatilité passée de l’actif sous-jacent,
+- et d’un indicateur de volatilité de marché agrégé.
+
+Le projet s’inscrit dans une démarche appliquée, combinant analyse descriptive approfondie,
+sélection de variables et modélisation économétrique interprétable.
+
+
+## 2. Présentation générale des données
+
+Les données utilisées dans cette étude proviennent du marché des options actions
+et sont organisées sous la forme d’observations journalières.
+Chaque ligne du jeu de données correspond à un couple *(asset_id, obs_date)*,
+c’est-à-dire à un actif sous-jacent donné observé à une date donnée.
+
+Pour chaque observation, le jeu de données regroupe :
+- des informations agrégées sur l’activité de trading des options,
+- des caractéristiques de la chaîne d’options,
+- plusieurs mesures de volatilité historique,
+- ainsi qu’une mesure cible de volatilité implicite de référence.
+
+Deux jeux de données distincts sont fournis :
+- un **jeu d’entraînement**, contenant la variable cible,
+- un **jeu de test**, sur lequel les prédictions finales devront être produites.
+
+
+
+## 3. Chargement des données 
 
 ```{r eval=TRUE}
-train <- read.csv("train_ISF.csv", stringsAsFactors = FALSE)
+train <- read.csv("../train_ISF.csv", stringsAsFactors = FALSE)
 
 # Le nombre d'asset
-length(unique(train$asset_id))
+#length(unique(train$asset_id))
 
 ```
 
@@ -59,9 +97,6 @@ tab %>%
                 bootstrap_options = c("striped", "hover", "condensed")) %>%
   scroll_box(width = "100%", height = "450px")
 
-
-
-
 ```
 ```{r  message = FALSE,warning=FALSE}
 train %>%
@@ -71,19 +106,64 @@ train <- train %>%
   filter(abs(realized_vol_mid1 - 2484930) > 1e-6)
 
 ```
-### Bon on remarque clairement des outliers (valeurs extremes) on discutera de comment les traiter ( imputation, supression)
+
+Bon on remarque clairement des outliers (valeurs extremes) on discutera de comment les traiter ( imputation, supression)
+
+## 4. Description détaillée des variables
+
+Cette section présente chaque variable disponible dans les jeux de données.  
+
+### 4.1 Identifiants 
+
+**`asset_id`** identifie l’actif sous-jacent associé à chaque observation.
+Il s’agit d’un identifiant catégoriel correspondant au ticker de l’actif coté.
+
+Cette variable permet de capturer l’hétérogénéité entre actifs, notamment en termes
+de liquidité, de profil de risque et de comportement de volatilité.
 
 
+## 4.2 `obs_date` — Date d’observation
 
-## Histogrammes
+La variable `obs_date` correspond à la date journalière à laquelle l’observation est réalisée.
 
-```{r histograms, message=FALSE, warning=FALSE}
+Elle introduit une dimension temporelle essentielle, permettant d’identifier la période
+couverte par les données, d’éventuels régimes de marché ou des épisodes de stress
+caractérisés par une volatilité élevée.
+
+```{r viz_obs_date}
+library(dplyr)
+library(ggplot2)
+
+daily_counts <- train_dates %>%
+  count(obs_date, name = "n_obs") %>%
+  arrange(obs_date)
+
+
+date_summary <- daily_counts %>%
+  summarise(
+    date_min = min(obs_date, na.rm = TRUE),
+    date_max = max(obs_date, na.rm = TRUE),
+    n_days  = n()
+  )
+
+print(date_summary)
+
+```
+
+### 4.2 call_volume et put_volume
+
+Les variables **`call_volume`** et **`put_volume`** mesurent respectivement le nombre
+total de contrats call et put échangés au cours de la journée.
+
+Ces variables reflètent directement l’intensité de l’activité de marché et peuvent
+être interprétées comme des indicateurs de liquidité et d’intérêt spéculatif ou de couverture.
+
+```{r viz_call_put_volume, echo=TRUE}
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 
-
-vars <- c("call_volume", "put_volume", "call_oi", "put_oi", "strike_dispersion", "total_contracts")
+vars <- c("call_volume", "put_volume")
 
 train_long <- train %>%
   select(all_of(intersect(vars, names(train)))) %>%
@@ -98,6 +178,162 @@ ggplot(train_long, aes(x = Value_log)) +
     x = "log(1 + valeur)", y = "Fréquence"
   )
 ```
+
+### 4.3 call_oi et put_oi
+
+Les variables `call_oi` et `put_oi` correspondent respectivement au nombre de contrats
+call et put encore ouverts à la fin de la journée, c’est-à-dire non expirés et non exercés.
+Elles mesurent des stocks de positions, contrairement aux volumes qui capturent des flux
+journaliers d’échanges.
+
+L’open interest reflète un intérêt persistant des investisseurs pour l’actif sous-jacent.
+Un niveau élevé de `call_oi` peut traduire des anticipations haussières durables, tandis
+qu’un niveau élevé de `put_oi` est souvent interprété comme une demande soutenue de
+couverture contre le risque, potentiellement associée à une volatilité implicite plus élevée.
+
+```{r viz_call_put_oi, echo=TRUE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+vars <- c("call_oi", "put_oi")
+
+train_long <- train %>%
+  select(all_of(intersect(vars, names(train)))) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  mutate(Value_log = log1p(Value)) 
+
+ggplot(train_long, aes(x = Value_log)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p) — Call et Put volume",
+    x = "log(1 + valeur)", y = "Fréquence"
+  )
+```
+
+## 4.4 `maturity_count` 
+
+La variable `maturity_count` indique le nombre d’échéances distinctes disponibles
+dans la chaîne d’options pour un actif donné à une date donnée.
+
+Une chaîne d’options comportant un grand nombre d’échéances peut refléter une
+liquidité accrue et une richesse d’information plus importante, susceptibles
+d’améliorer la formation et la précision de la volatilité implicite.
+
+```{r viz_maturity_count, echo=TRUE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+vars_1 <- c("maturity_count")
+
+train_long <- train %>%
+  select(all_of(intersect(vars_1, names(train)))) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") 
+
+ggplot(train, aes(x = factor(maturity_count))) +
+  geom_bar(fill = "#2C7FB8", color = "white") +
+  labs(title = "Barplot de maturity_count",
+       x = "maturity_count", y = "Nombre d'observations") +
+  theme_minimal()
+```
+
+## 4.5 `total_contracts` 
+
+La variable `total_contracts` mesure le nombre total de contrats different d’options disponibles
+dans la chaîne associée à un actif et une date donnés.
+
+Elle constitue un indicateur global de profondeur du marché des options et peut être
+associée à une meilleure qualité des signaux de prix utilisés pour inférer la
+volatilité implicite.
+
+```{r viz_total_contracts, echo=TRUE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+vars <- c("total_contracts")
+
+train_long <- train %>%
+  select(all_of(intersect(vars, names(train)))) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  mutate(Value_log = log1p(Value)) 
+
+ggplot(train_long, aes(x = Value_log)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p) — total_contrats",
+    x = "log(1 + valeur)", y = "Fréquence"
+  )
+```
+
+## 4.6 `strike_dispersion` 
+
+La variable `strike_dispersion` mesure la dispersion des prix d’exercice disponibles
+dans la chaîne d’options pour un actif donné.
+
+Une dispersion plus élevée peut traduire une incertitude accrue quant aux scénarios
+de prix futurs ou une chaîne d’options plus complète, ce qui peut influencer la
+formation de la volatilité implicite observée.
+
+```{r viz_strike_dispersion, echo=TRUE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+vars <- c("strike_dispersion")
+
+train_long <- train %>%
+  select(all_of(intersect(vars, names(train)))) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  mutate(Value_log = log1p(Value)) 
+
+ggplot(train_long, aes(x = Value_log)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p) — strike_dispersion",
+    x = "log(1 + valeur)", y = "Fréquence"
+  )
+```
+
+## 4.7 `realized_vol_*` 
+
+Les variables `realized_vol_*` mesurent la volatilité réalisée du prix de l’actif
+sous-jacent sur différentes fenêtres temporelles, allant du court au long terme.
+
+Elles capturent la dynamique historique de la variabilité des prix et constituent
+des prédicteurs naturels de la volatilité implicite, en raison de la persistance
+bien documentée de la volatilité dans le temps.
+
+```{r viz_realized_vol, echo=TRUE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+rv_cols <- grep("^realized_vol_", names(train), value = TRUE)
+
+for (v in rv_cols) {
+  p <- ggplot(train, aes(x = log1p(.data[[v]]))) +
+    geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
+    labs(
+      title = paste0("Histogramme de ",v),
+      x     = paste0(v),
+      y     = "Frequence"
+    ) +
+    theme_minimal()
+  
+  print(p)
+}
+
+```
+
 
 
 ```{r boxplot, message=FALSE, warning=FALSE}
@@ -124,73 +360,28 @@ for (v in rv_cols) {
 ```
 
 
+## 4.8 `market_vol_index` 
 
+La variable `market_vol_index` est un indicateur synthétique du niveau global de
+volatilité sur le marché financier.
 
+Elle capte la composante systémique du risque, commune à l’ensemble des actifs, et
+permet d’intégrer l’état général du marché et de l’aversion au risque dans la
+modélisation de la volatilité implicite.
 
-
-
-
-```{r histograms, message=FALSE, warning=FALSE}
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-
-
-rv_cols <- grep("^realized_vol_", names(train), value = TRUE)
-
-for (v in rv_cols) {
-  p <- ggplot(train, aes(x = log(.data[[v]]))) +
-    geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
-    labs(
-      title = paste0("Histogramme de ",v),
-      x     = paste0(v),
-      y     = "Frequence"
-    ) +
-    theme_minimal()
-  
-  print(p)
-}
-
-
-```
-
-```{r histograms, message=FALSE, warning=FALSE}
+```{r viz_market_vol_index, echo=TRUE}
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 
 
 ggplot(train, aes(x = market_vol_index)) +
-  geom_histogram(bins = 50, fill = "grey70", color = "white") +
+  geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
   labs(title = "Histogramme du market_vol_index",
        x = "market_vol_index",
        y = "Frequence") +
   theme_minimal()
-
 ```
-
-
-"""""
-
-```{r barplots, message=FALSE, warning=FALSE}
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-
-vars_1 <- c("maturity_count")
-
-train_long <- train %>%
-  select(all_of(intersect(vars_1, names(train)))) %>%
-  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") 
-
-ggplot(train, aes(x = factor(maturity_count))) +
-  geom_bar(fill = "#2C7FB8", color = "white") +
-  labs(title = "Barplot de maturity_count",
-       x = "maturity_count", y = "Nombre d'observations") +
-  theme_minimal()
-```
-
-
 
 
 ```{r serie temporelle, message=FALSE, warning=FALSE}
@@ -212,23 +403,28 @@ ggplot(train2, aes(x = obs_date, y = market_vol_index)) +
 
 
 
-```{r serie temporelle, message=FALSE, warning=FALSE}
+## 4.12 `implied_vol_ref` 
+
+La variable `implied_vol_ref` est la variable cible du projet. Elle représente la
+volatilité implicite extraite des prix d’options proches du prix à maturité et
+reflète l’anticipation du marché quant à la volatilité future de l’actif.
+
+L’analyse de sa distribution est centrale, dans la mesure où la performance finale
+des modèles sera évaluée sur l’échelle originale de cette variable, sans transformation
+lors du calcul du RMSE.
+
+```{r viz_implied_vol_ref, echo=TRUE}
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 
 ggplot(train, aes(x = implied_vol_ref)) +
-  geom_histogram(bins = 50, fill = "grey70", color = "white") +
+  geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
   labs(title = "Histogramme de implied_vol_ref",
        x = "implied_vol_ref",
        y = "Frequence") +
   theme_minimal()
-
 ```
-
-
-
-
 
 
 
