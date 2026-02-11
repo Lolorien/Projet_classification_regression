@@ -74,6 +74,33 @@ train <- read.csv("../train_ISF.csv", stringsAsFactors = FALSE)
 #train <- read.csv("~/Downloads/train_ISF.csv", stringsAsFactors = FALSE)
 ```
 
+
+
+```{r valeur_manquantes, echo=TRUE}
+
+sapply(train, function(x) sum(is.na(x)))
+
+
+```
+
+Le dataset ne contient aucune valeur manquantes.
+
+```{r valeur_abérrantes, echo=TRUE}
+
+counts <- as.integer(table(train[["asset_id"]]))
+
+h <- hist(counts, breaks = "FD", plot = FALSE)
+plot(h$mids, log10(h$counts + 1), type = "h",
+     main = "Histogramme (axe Y en log10)",
+     xlab = "Nombre d'observations",
+     ylab = "log10(nombre d'assets + 1)")
+
+```
+
+On remarque que les asset n'ont pas le même nombre d'observation. 
+
+
+
 ## summary
 
 ```{r summary-numeric, message=FALSE, warning=FALSE}}
@@ -105,16 +132,6 @@ tab %>%
   scroll_box(width = "100%", height = "450px")
 
 ```
-
-```{r  message = FALSE,warning=FALSE}
-train %>%
-  filter(realized_vol_mid1 == 2484930) 
-
-#train <- train %>%
- # filter(abs(realized_vol_mid1 - 2484930) > 1e-6)
-
-```
-
 Bon on remarque clairement des outliers (valeurs extremes) on discutera
 de comment les traiter ( imputation, supression)
 
@@ -443,8 +460,52 @@ ggplot(train, aes(x = implied_vol_ref)) +
   theme_minimal()
 ```
 
+Dans cette partie, nous analysons la distribution de la variable cible implied_vol_ref.
+
+L’histogramme montre que la volatilité implicite est asymétrique à droite.
+La majorité des observations se situe entre 30 et 50, avec une concentration autour de 35–45.
+
+On observe également une queue droite importante, avec des valeurs pouvant dépasser 100 lors des périodes de stress extrême.
+
+Cela indique que la variable cible n’est pas parfaitement symétrique et qu’elle présente des épisodes rares mais intenses de forte volatilité.
 
 
+
+```{r viz_implied_vol_ref, echo=TRUE}
+library(data.table)
+library(ggplot2)
+
+setDT(train)                 
+train[, obs_date := as.IDate(obs_date)]
+
+train_daily <- train[, .(mean_iv = mean(implied_vol_ref, na.rm = TRUE)),
+                     by = obs_date]
+
+
+
+ggplot(train_daily, aes(x = obs_date, y = mean_iv)) +
+  geom_line(color = "red") +
+  theme_minimal() +
+  labs(title = "Volatilité implicite moyenne par jour",
+       x = "Date",
+       y = "Volatilité implicite moyenne")
+
+
+```
+
+
+
+Afin d’analyser la dynamique dans le temps, nous avons calculé la volatilité implicite moyenne par jour sur l’ensemble des actifs.
+
+Le graphique met en évidence :
+
+Un pic très marqué début 2020, correspondant au choc lié au COVID-19.
+
+Une forte hausse brutale suivie d’une décrue progressive.
+
+Une stabilisation en 2021 à des niveaux plus modérés.
+
+Cela confirme que la volatilité implicite capte bien les périodes de stress de marché et présente des régimes différents selon le contexte économique.
 
 
 ## Traitement des valeurs abérrantes 
@@ -459,7 +520,7 @@ L’objectif est de corriger ces anomalies afin d’obtenir une base de données
 library(zoo)
 library(data.table)
 
-setDT(train)
+setDT(train)  
 
 train[, obs_date := as.IDate(obs_date)]
 setorder(train, asset_id, obs_date)
@@ -506,6 +567,28 @@ train[, (rv_vars) := lapply(.SD, function(x) na.locf(x, na.rm = FALSE)),
 ```
 
 Au total,  lignes, soit environ  % de l’ensemble du jeu de données, présentent au moins une volatilité réalisée jugée anormale. Cela signifie que la grande majorité des observations (environ  %) n’est pas affectée par ce traitement.
+
+
+```{r valeur_abérrantes, echo=TRUE}
+
+sapply(train, function(x) sum(is.na(x)))
+
+# l'asset  contenant des NA
+assets_avec_na <- unique(train$asset_id[!complete.cases(train)])
+assets_avec_na
+
+
+```
+
+```{r valeur_abérrantes, echo=TRUE}
+
+
+train <- na.omit(train)
+
+sapply(train, function(x) sum(is.na(x)))
+
+```
+## commentaire apres le omit
 
 
 ```{r summary-numeric, message=FALSE, warning=FALSE}}
@@ -823,12 +906,12 @@ train[, RV_gap := realized_vol_short - realized_vol_long4]
 # PutCall_OI = put_oi / (call_oi + put_oi)
 train[, PutCall_OI := fifelse((call_oi + put_oi) > 0,
                              put_oi / (call_oi + put_oi),
-                             NA_real_)]
+                             0)]
 
 # PutCall_Vol = put_volume / call_volume 
 train[, PutCall_Vol := fifelse((call_volume + put_volume) > 0,
                               put_volume / (call_volume + put_volume),
-                              NA_real_)]
+                              0)]
 
 
 train[, log_vol_total := log1p(put_volume + call_volume)]
@@ -843,7 +926,20 @@ train[, option_depth := fifelse(maturity_count > 0,
                                 NA_real_)]
 
 
+sapply(train, function(x) sum(is.na(x)))
+
 ```
+
+
+
+
+```{r , message=FALSE, warning=FALSE}
+
+sapply(train, function(x) sum(is.na(x)))
+
+```
+
+
 
 ## Corrélation des nouvelles variables avec la variable cible
 
@@ -983,5 +1079,48 @@ nrow(train_set)
 nrow(test_set)
 
 ```
+
+
+```{r modèle de regression linéaire naif, message=FALSE, warning=FALSE}
+
+model_lm <- lm(
+  implied_vol_ref ~ strike_dispersion +
+                     maturity_count +
+                     total_contracts +
+                     realized_vol_short +
+                     realized_vol_long4 +
+                     market_vol_index +
+                     RV_gap +
+                     PutCall_OI +
+                     PutCall_Vol +
+                     log_vol_total +
+                     pcvol_x_mkt +
+                     rvgap_x_mkt +
+                     option_depth,
+  data = train_set
+)
+summary(model_lm)
+
+```
+
+
+```{r modèle de regression linéaire naif, message=FALSE, warning=FALSE}
+
+plot(model_lm)
+
+
+```
+
+```{r modèle de regression linéaire naif, message=FALSE, warning=FALSE}
+
+pred_test_interne_lm <- predict(model_lm, newdata = test_set)
+
+rmse_interne_lm <- sqrt(mean((test_set$implied_vol_ref - pred_test_interne_lm)^2))
+
+rmse_interne_lm
+
+```
+
+
 
 
