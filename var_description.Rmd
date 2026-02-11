@@ -102,8 +102,8 @@ tab %>%
 train %>%
   filter(realized_vol_mid1 == 2484930) 
 
-train <- train %>%
-  filter(abs(realized_vol_mid1 - 2484930) > 1e-6)
+#train <- train %>%
+ # filter(abs(realized_vol_mid1 - 2484930) > 1e-6)
 
 ```
 
