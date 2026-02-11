@@ -889,8 +889,6 @@ et non hasardeuses.
 
 Dans cette partie, nous introduisons plusieurs variables construites à partir des informations disponibles afin d’enrichir le pouvoir explicatif du modèle. Ces transformations ont pour but de capter des mécanismes économiques qui ne sont pas forcement visibles à travers les variables brutes.
 
-La variable RV_gap mesure l’écart entre la volatilité réalisée de court terme et celle de long terme. Elle permet de capter des situations où la volatilité récente s’écarte du niveau de fond du marché, ce qui peut être informatif pour la formation de la volatilité implicite.
-
 Les variables PutCall_OI et PutCall_Vol sont des ratios qui traduisent l’équilibre relatif entre options put et call, respectivement en termes d’open interest et de volume échangé. Elles fournissent une mesure synthétique du positionnement et du sentiment du marché des options, tout en neutralisant les effets de taille entre actifs.
 
 La variable log_vol_total capture l’intensité globale de l’activité sur le marché des options, en combinant les volumes call et put et en appliquant une transformation logarithmique afin de réduire l’asymétrie de distribution.
@@ -900,8 +898,6 @@ Les variables d’interaction pcvol_x_mkt et rvgap_x_mkt permettent de prendre e
 La variable option_depth mesure la densité moyenne de contrats d’options par maturité disponible. Elle permet de capturer le degré de concentration de l’activité sur le marché des options, indépendamment du nombre total de maturités. Cette information est susceptible d’être liée à la formation de la volatilité implicite, en particulier lorsque l’activité se concentre sur certains horizons temporels.
 
 ```{r , message=FALSE, warning=FALSE}
-# RV_gap = realized_vol_short − realized_vol_long4
-train[, RV_gap := realized_vol_short - realized_vol_long4]
 
 # PutCall_OI = put_oi / (call_oi + put_oi)
 train[, PutCall_OI := fifelse((call_oi + put_oi) > 0,
@@ -925,9 +921,6 @@ train[, option_depth := fifelse(maturity_count > 0,
                                 total_contracts / maturity_count,
                                 NA_real_)]
 
-
-sapply(train, function(x) sum(is.na(x)))
-
 ```
 
 
@@ -950,7 +943,7 @@ cible `implied_vol_ref`.
 ```{r matrice_correlation, message=FALSE, warning=FALSE}
 
 vars_new <- c(
-  "RV_gap", "PutCall_OI", "PutCall_Vol",
+ "PutCall_OI", "PutCall_Vol",
   "log_vol_total", "pcvol_x_mkt", "rvgap_x_mkt",
   "option_depth",
   "implied_vol_ref"
@@ -1090,7 +1083,6 @@ model_lm <- lm(
                      realized_vol_short +
                      realized_vol_long4 +
                      market_vol_index +
-                     RV_gap +
                      PutCall_OI +
                      PutCall_Vol +
                      log_vol_total +
