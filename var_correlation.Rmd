@@ -67,7 +67,7 @@ lequel les prédictions finales devront être produites.
 ## 3. Chargement des données
 
 ```{r eval=TRUE}
-train <- read.csv("../train_ISF.csv", stringsAsFactors = FALSE)
+DATA <- read.csv("../train_ISF.csv", stringsAsFactors = FALSE)
 
 # Le nombre d'asset
 #length(unique(train$asset_id))
@@ -78,16 +78,16 @@ train <- read.csv("../train_ISF.csv", stringsAsFactors = FALSE)
 
 ```{r valeur_manquantes, echo=TRUE}
 
-sapply(train, function(x) sum(is.na(x)))
+sapply(DATA, function(x) sum(is.na(x)))
 
 
 ```
 
-Le dataset ne contient aucune valeur manquantes.
+Le dataset ne contient aucune valeur manquante.
 
 ```{r valeur_abérrantes, echo=TRUE}
 
-counts <- as.integer(table(train[["asset_id"]]))
+counts <- as.integer(table(DATA[["asset_id"]]))
 
 h <- hist(counts, breaks = "FD", plot = FALSE)
 plot(h$mids, log10(h$counts + 1), type = "h",
@@ -97,14 +97,14 @@ plot(h$mids, log10(h$counts + 1), type = "h",
 
 ```
 
-On remarque que les asset n'ont pas le même nombre d'observation. 
+On remarque que les assets n'ont pas le même nombre d'observation. 
 
 
 
 ## summary
 
 ```{r summary-numeric, message=FALSE, warning=FALSE}}
-var_numeriques <- train %>% 
+var_numeriques <- DATA %>% 
   select(where(is.numeric))
 
 tab <- var_numeriques %>%
@@ -163,7 +163,7 @@ marché ou des épisodes de stress caractérisés par une volatilité élevée.
 library(dplyr)
 library(ggplot2)
 
-daily_counts <- train %>%
+daily_counts <- DATA %>%
   count(obs_date, name = "n_obs") %>%
   arrange(obs_date)
 
@@ -196,8 +196,8 @@ library(ggplot2)
 
 vars <- c("call_volume", "put_volume")
 
-train_long <- train %>%
-  select(all_of(intersect(vars, names(train)))) %>%
+train_long <- DATA %>%
+  select(all_of(intersect(vars, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
   mutate(Value_log = log1p(Value)) 
 
@@ -233,8 +233,8 @@ library(ggplot2)
 
 vars <- c("call_oi", "put_oi")
 
-train_long <- train %>%
-  select(all_of(intersect(vars, names(train)))) %>%
+train_long <- DATA %>%
+  select(all_of(intersect(vars, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
   mutate(Value_log = log1p(Value)) 
 
@@ -265,8 +265,8 @@ library(ggplot2)
 
 vars_1 <- c("maturity_count")
 
-train_long <- train %>%
-  select(all_of(intersect(vars_1, names(train)))) %>%
+train_long <- DATA %>%
+  select(all_of(intersect(vars_1, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") 
 
 ggplot(train, aes(x = factor(maturity_count))) +
@@ -294,8 +294,8 @@ library(ggplot2)
 
 vars <- c("total_contracts")
 
-train_long <- train %>%
-  select(all_of(intersect(vars, names(train)))) %>%
+train_long <- DATA %>%
+  select(all_of(intersect(vars, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
   mutate(Value_log = log1p(Value)) 
 
@@ -326,8 +326,8 @@ library(ggplot2)
 vars <- c("strike_dispersion")
 
 
-train_long <- train %>%
-  select(all_of(intersect(vars, names(train)))) %>%
+train_long <- DATA %>%
+  select(all_of(intersect(vars, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
   mutate(Value_log = log1p(Value)) 
 
@@ -356,10 +356,10 @@ library(tidyr)
 library(ggplot2)
 
 
-rv_cols <- grep("^realized_vol_", names(train), value = TRUE)
+rv_cols <- grep("^realized_vol_", names(DATA), value = TRUE)
 
 for (v in rv_cols) {
-  p <- ggplot(train, aes(x = log1p(.data[[v]]))) +
+  p <- ggplot(DATA, aes(x = log1p(.data[[v]]))) +
     geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
     labs(
       title = paste0("Histogramme de ",v),
@@ -379,10 +379,10 @@ library(tidyr)
 library(ggplot2)
 
 
-rv_cols <- grep("^realized_vol_", names(train), value = TRUE)
+rv_cols <- grep("^realized_vol_", names(DATA), value = TRUE)
 
 for (v in rv_cols) {
-  p <- ggplot(train, aes(y = log(.data[[v]]))) +
+  p <- ggplot(DATA, aes(y = log(.data[[v]]))) +
     geom_boxplot(fill = "grey70", outlier_alpha = 0.2) +
     labs(
       title = paste0("Boxplot de ", v),
@@ -411,7 +411,7 @@ library(tidyr)
 library(ggplot2)
 
 
-ggplot(train, aes(x = market_vol_index)) +
+ggplot(DATA, aes(x = market_vol_index)) +
   geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
   labs(title = "Histogramme du market_vol_index",
        x = "market_vol_index",
@@ -424,10 +424,10 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 
-train2 <- train %>%
+DATA2 <- DATA %>%
   mutate(obs_date = as.Date(obs_date))
 
-ggplot(train2, aes(x = obs_date, y = market_vol_index)) +
+ggplot(DATA2, aes(x = obs_date, y = market_vol_index)) +
   geom_line(color = "red") +
   labs(title = "Evolution temporelle du market_vol_index",
        x = "Date",
@@ -452,7 +452,7 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 
-ggplot(train, aes(x = implied_vol_ref)) +
+ggplot(DATA, aes(x = implied_vol_ref)) +
   geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
   labs(title = "Histogramme de implied_vol_ref",
        x = "implied_vol_ref",
@@ -475,15 +475,15 @@ Cela indique que la variable cible n’est pas parfaitement symétrique et qu’
 library(data.table)
 library(ggplot2)
 
-setDT(train)                 
-train[, obs_date := as.IDate(obs_date)]
+setDT(DATA)                 
+DATA[, obs_date := as.IDate(obs_date)]
 
-train_daily <- train[, .(mean_iv = mean(implied_vol_ref, na.rm = TRUE)),
+DATA_daily <- DATA[, .(mean_iv = mean(implied_vol_ref, na.rm = TRUE)),
                      by = obs_date]
 
 
 
-ggplot(train_daily, aes(x = obs_date, y = mean_iv)) +
+ggplot(DATA_daily, aes(x = obs_date, y = mean_iv)) +
   geom_line(color = "red") +
   theme_minimal() +
   labs(title = "Volatilité implicite moyenne par jour",
@@ -508,6 +508,35 @@ Une stabilisation en 2021 à des niveaux plus modérés.
 Cela confirme que la volatilité implicite capte bien les périodes de stress de marché et présente des régimes différents selon le contexte économique.
 
 
+
+# Split temporel des données
+
+Dans cette partie, nous mettons en place un découpage temporel des données.
+
+Le découpage est réalisé de manière chronologique. L’échantillon d’apprentissage inclut l’ensemble de l’année 2019 ainsi qu’une grande partie de la période Covid, afin que le modèle soit exposé à des régimes de marché fortement volatils. L’échantillon de test interne comprend la fin de la période Covid ainsi que la phase de transition vers 2021.
+
+L’échantillon de test utilisé ici est exclusivement issu de ce découpage et sert uniquement à l’évaluation intermédiaire des modèles. Le jeu de données de test fourni séparément n’est pas utilisé à ce stade et sera réservé à l’évaluation finale.
+
+```{r split_temporel, message=FALSE, warning=FALSE}
+library(data.table)
+
+set.seed(2025)
+
+
+# Split temporel 
+train <- DATA[obs_date <= as.IDate("2020-12-31")]
+test <- DATA[obs_date >  as.IDate("2020-12-31")]
+
+# Vérifications
+range(train$obs_date)
+range(test$obs_date)
+
+nrow(train)
+nrow(test)
+
+```
+
+
 ## Traitement des valeurs abérrantes 
 
 Dans cette partie, nous nous focalisons sur le traitement des valeurs extrêmes. En effet, l’analyse des volatilités réalisées met en évidence la présence de valeurs aberrantes, définies ici comme des valeurs nulles ou situées dans l’extrême queue de la distribution.
@@ -520,49 +549,28 @@ L’objectif est de corriger ces anomalies afin d’obtenir une base de données
 library(zoo)
 library(data.table)
 
-setDT(train)  
+library(data.table)
 
+setDT(train)
 train[, obs_date := as.IDate(obs_date)]
 setorder(train, asset_id, obs_date)
 
 rv_vars <- grep("^realized_vol_", names(train), value = TRUE)
-
-# Seuil
 q <- 0.9999
 
+# Seuils appris sur le train
 rv_upper <- sapply(rv_vars, function(v) as.numeric(quantile(train[[v]], probs = q, na.rm = TRUE)))
 names(rv_upper) <- rv_vars
 
-# CALCUL DU NOMBRE DE VALEURS QUI SERONT REMPLACÉES 
-replaced_summary <- sapply(rv_vars, function(v) {
-  flag <- (train[[v]] == 0 | train[[v]] > rv_upper[v])
-  n_rep <- sum(flag, na.rm = TRUE)
-  c(
-    n_replaced = n_rep
-  )
-})
-
-t(replaced_summary)
-
-# PROPORTION DE LIGNES CONCERNÉES (au moins une vol aberrante)
-any_vol_replaced <- rowSums(
-  sapply(rv_vars, function(v) (train[[v]] == 0 | train[[v]] > rv_upper[v])),
-  na.rm = TRUE
-) > 0
-
-mean(any_vol_replaced)   # proportion de lignes concernées
-sum(any_vol_replaced)    # nombre de lignes concernées
-
-# REMPLACEMENT EFFECTIF PAR NA
+# Remplacement : 0 -> NA (optionnel), > quantile -> quantile
 for (v in rv_vars) {
-  train[get(v) == 0, (v) := NA_real_]
-  train[get(v) > rv_upper[v], (v) := NA_real_]
+  train[get(v) > rv_upper[v], (v) := rv_upper[v]]     # cap direct au quantile
 }
 
-# IMPUTATION TEMPORELLE INTRA-ACTIF (LOCF)
+# Si vous avez mis des NA (zéros), vous pouvez encore faire LOCF pour eux
 train[, (rv_vars) := lapply(.SD, function(x) na.locf(x, na.rm = FALSE)),
       by = asset_id, .SDcols = rv_vars]
-  
+
 
 ```
 
@@ -579,16 +587,6 @@ assets_avec_na
 
 
 ```
-
-```{r valeur_abérrantes, echo=TRUE}
-
-
-train <- na.omit(train)
-
-sapply(train, function(x) sum(is.na(x)))
-
-```
-## commentaire apres le omit
 
 
 ```{r summary-numeric, message=FALSE, warning=FALSE}}
@@ -623,6 +621,43 @@ tab %>%
 
 Les statistiques montrent désormais des valeurs maximales cohérentes et nettement inférieures aux niveaux anormalement élevés observés précédemment.
 
+
+## Application de l'imputation au test
+
+
+
+```{r imputation test, message=FALSE, warning=FALSE}}
+
+library(data.table)
+library(zoo)
+
+setDT(test)
+test[, obs_date := as.IDate(obs_date)]
+setorder(test, asset_id, obs_date)
+
+# Cap au quantile du train
+for (v in rv_vars) {
+  test[get(v) > rv_upper[v], (v) := rv_upper[v]]
+}
+
+# Si vous avez mis les zéros à NA : LOCF
+test[, (rv_vars) := lapply(.SD, function(x) na.locf(x, na.rm = FALSE)),
+     by = asset_id, .SDcols = rv_vars]
+
+
+```
+
+
+```{r valeur_abérrantes, echo=TRUE}
+
+sapply(test, function(x) sum(is.na(x)))
+
+# l'asset  contenant des NA
+assets_avec_na <- unique(test$asset_id[!complete.cases(test)])
+assets_avec_na
+
+
+```
 
 ## 5 Etude des corrélations
 
@@ -893,33 +928,46 @@ Les variables PutCall_OI et PutCall_Vol sont des ratios qui traduisent l’équi
 
 La variable log_vol_total capture l’intensité globale de l’activité sur le marché des options, en combinant les volumes call et put et en appliquant une transformation logarithmique afin de réduire l’asymétrie de distribution.
 
-Les variables d’interaction pcvol_x_mkt et rvgap_x_mkt permettent de prendre en compte le régime de marché. Elles mesurent comment l’impact du sentiment des investisseurs et des écarts de volatilité varie en fonction du niveau global d’incertitude sur le marché.
+La variable d’interaction pcvol_x_mkt permet de prendre en compte le régime de marché. Elle mesure comment l’impact du sentiment des investisseurs varie en fonction du niveau global d’incertitude sur le marché.
 
 La variable option_depth mesure la densité moyenne de contrats d’options par maturité disponible. Elle permet de capturer le degré de concentration de l’activité sur le marché des options, indépendamment du nombre total de maturités. Cette information est susceptible d’être liée à la formation de la volatilité implicite, en particulier lorsque l’activité se concentre sur certains horizons temporels.
 
 ```{r , message=FALSE, warning=FALSE}
 
-# PutCall_OI = put_oi / (call_oi + put_oi)
-train[, PutCall_OI := fifelse((call_oi + put_oi) > 0,
-                             put_oi / (call_oi + put_oi),
+library(data.table)
+
+make_features <- function(dt) {
+  dt <- copy(dt)
+
+  # PutCall_OI = put_oi / (call_oi + put_oi)
+  dt[, PutCall_OI := fifelse((call_oi + put_oi) > 0,
+                            put_oi / (call_oi + put_oi),
+                            0)]
+
+  # PutCall_Vol = put_volume / (call_volume + put_volume)
+  dt[, PutCall_Vol := fifelse((call_volume + put_volume) > 0,
+                             put_volume / (call_volume + put_volume),
                              0)]
 
-# PutCall_Vol = put_volume / call_volume 
-train[, PutCall_Vol := fifelse((call_volume + put_volume) > 0,
-                              put_volume / (call_volume + put_volume),
-                              0)]
+  # log_vol_total = log(1 + total volume)
+  dt[, log_vol_total := log1p(put_volume + call_volume)]
+
+  # interaction with market index
+  dt[, pcvol_x_mkt := PutCall_Vol * market_vol_index]
+
+  # option depth
+  dt[, option_depth := fifelse(maturity_count > 0,
+                               total_contracts / maturity_count,
+                               0)]
+
+  return(dt)
+}
 
 
-train[, log_vol_total := log1p(put_volume + call_volume)]
+setDT(train); setDT(test)
 
-
-train[, pcvol_x_mkt := PutCall_Vol * market_vol_index]
-
-train[, rvgap_x_mkt := RV_gap * market_vol_index]
-
-train[, option_depth := fifelse(maturity_count > 0,
-                                total_contracts / maturity_count,
-                                NA_real_)]
+train <- make_features(train)
+test  <- make_features(test)
 
 ```
 
@@ -944,7 +992,7 @@ cible `implied_vol_ref`.
 
 vars_new <- c(
  "PutCall_OI", "PutCall_Vol",
-  "log_vol_total", "pcvol_x_mkt", "rvgap_x_mkt",
+  "log_vol_total", "pcvol_x_mkt",
   "option_depth",
   "implied_vol_ref"
 )
@@ -1016,7 +1064,7 @@ ggplot(top_correlations, aes(x = reorder(Variable, abs(Correlation)),
 ```
 
 
-Le tableau montre que les corrélations entre les variables construites et la volatilité implicite de référence restent globalement faibles, avec des coefficients compris à peu  près entre –0,14 et 0,14. Toutefois, ces valeurs sont nettement plus élevées que celles obtenues avant les transformations, où les corrélations étaient proches de zéro. 
+Le tableau montre que les corrélations entre les variables construites et la volatilité implicite de référence restent globalement faibles, avec des coefficients compris à peu  près entre –0,10 et 0,17. Toutefois, ces valeurs sont nettement plus élevées que celles obtenues avant les transformations, où les corrélations étaient proches de zéro. 
 Cela suggère que les transformations appliquées permettraient de mieux capter certains mécanismes liés à la formation de la volatilité implicite, même si la relation reste modérée.
 
 
@@ -1027,58 +1075,34 @@ Cela suggère que les transformations appliquées permettraient de mieux capter 
 
 # Variables de volatilité réalisée à supprimer
 rv_to_drop <- setdiff(
-  grep("^realized_vol_", names(train), value = TRUE),
+  grep("^realized_vol_", names(DATA), value = TRUE),
   c("realized_vol_short", "realized_vol_long4")
 )
 
 # Variables de volume et d'open interest à supprimer
 vars_to_drop <- c(
   "call_volume", "put_volume",
-  "call_oi", "put_oi",
+  "call_oi", "put_oi", "maturity_count", 
   rv_to_drop
 )
 
 # Suppression
 train[, (vars_to_drop) := NULL]
+test[, (vars_to_drop) := NULL]
+
 
 names(train)
+names(test)
 ```
 
 
-
-# Split temporel des données
-
-Dans cette partie, nous mettons en place un découpage temporel des données afin d’évaluer les performances du modèle sur un échantillon hors-échantillon.
-
-Le découpage est réalisé de manière chronologique. L’échantillon d’apprentissage inclut l’ensemble de l’année 2019 ainsi qu’une grande partie de la période Covid, afin que le modèle soit exposé à des régimes de marché fortement volatils. L’échantillon de test interne comprend la fin de la période Covid ainsi que la phase de transition vers 2021.
-
-L’échantillon de test utilisé ici est exclusivement issu de ce découpage et sert uniquement à l’évaluation intermédiaire des modèles. Le jeu de données de test fourni séparément n’est pas utilisé à ce stade et sera réservé à l’évaluation finale.
-
-```{r split_temporel, message=FALSE, warning=FALSE}
-library(data.table)
-
-set.seed(2025)
-
-
-# Split temporel 
-train_set <- train[obs_date <= as.IDate("2020-12-31")]
-test_set  <- train[obs_date >  as.IDate("2020-12-31")]
-
-# Vérifications
-range(train_set$obs_date)
-range(test_set$obs_date)
-
-nrow(train_set)
-nrow(test_set)
-
-```
+# Modèle de regression linéaire
 
 
 ```{r modèle de regression linéaire naif, message=FALSE, warning=FALSE}
 
 model_lm <- lm(
   implied_vol_ref ~ strike_dispersion +
-                     maturity_count +
                      total_contracts +
                      realized_vol_short +
                      realized_vol_long4 +
@@ -1087,9 +1111,8 @@ model_lm <- lm(
                      PutCall_Vol +
                      log_vol_total +
                      pcvol_x_mkt +
-                     rvgap_x_mkt +
                      option_depth,
-  data = train_set
+  data = train
 )
 summary(model_lm)
 
@@ -1103,16 +1126,223 @@ plot(model_lm)
 
 ```
 
+# Analyse des Résidus du Modèle Linéaire Initial
+
+Les graphiques de diagnostic du modèle linéaire (Residuals vs Fitted, Normal Q-Q, Scale-Location) révèlent plusieurs problèmes majeurs :
+
+### 1. Residuals vs. Fitted
+*   **Observation :** Présence d'une forme d'entonnoir prononcée (hétéroscédasticité) et d'une courbe claire (non-linéarité) de la ligne rouge, s'éloignant significativement de zéro.
+*   **Conclusion :** La variance des erreurs n'est pas constante, et la relation modélisée n'est pas linéaire. Le modèle a tendance à sur-estimer les faibles volatilités et à sous-estimer les fortes.
+
+### 2. Normal Q-Q
+*   **Observation :** Les points s'écartent considérablement de la ligne droite théorique, surtout aux extrémités.
+*   **Conclusion :** Les résidus ne suivent pas une distribution normale. Ils présentent une forte asymétrie et des queues lourdes.
+
+### 3. Scale-Location
+*   **Observation :** La ligne rouge présente une pente positive croissante.
+*   **Conclusion :** Confirme la forte hétéroscédasticité : la magnitude des erreurs augmente avec les valeurs prédites par le modèle.
+
+**Recommandation générale :** Ces diagnostics indiquent que le modèle linéaire sur la variable cible brute (`implied_vol_ref`) est fortement sous-performant et viole les hypothèses fondamentales. Une transformation logarithmique de la variable cible et/ou l'utilisation de modèles non-linéaires (comme les modèles basés sur des arbres) est fortement recommandée.
+
+
+
+
 ```{r modèle de regression linéaire naif, message=FALSE, warning=FALSE}
 
-pred_test_interne_lm <- predict(model_lm, newdata = test_set)
+pred_test_interne_lm <- predict(model_lm, newdata = test)
 
-rmse_interne_lm <- sqrt(mean((test_set$implied_vol_ref - pred_test_interne_lm)^2))
+rmse_interne_lm <- sqrt(mean((test$implied_vol_ref - pred_test_interne_lm)^2))
 
 rmse_interne_lm
 
 ```
 
+## Modèle earth
 
+
+```{r modèle earth, message=FALSE, warning=FALSE}
+
+library(earth)
+
+mars_fit <- earth(
+  implied_vol_ref ~ realized_vol_short + realized_vol_long4  +
+    PutCall_OI + PutCall_Vol + log_vol_total + pcvol_x_mkt + option_depth +
+    market_vol_index + strike_dispersion + total_contracts,
+  data = train,
+  degree = 2,
+  nprune = 30
+)
+
+
+```
+
+
+
+```{r modèle earth, message=FALSE, warning=FALSE}
+
+
+pred_train <- predict(mars_fit, newdata = train)
+pred_test  <- predict(mars_fit, newdata = test)
+
+rmse <- function(y, yhat) sqrt(mean((y - yhat)^2, na.rm = TRUE))
+
+rmse_train <- rmse(train$implied_vol_ref, pred_train)
+rmse_test  <- rmse(test$implied_vol_ref,  pred_test)
+
+rmse_train
+rmse_test
+```
+```{r modèle earth, message=FALSE, warning=FALSE}
+
+summary(mars_fit)
+
+
+```
+
+
+## Modèle lasso
+
+```{r modèle LASSO, message=FALSE, warning=FALSE}
+
+library(glmnet)
+
+
+drop_cols <- c("asset_id", "obs_date") 
+target <- "implied_vol_ref"
+
+
+x_train <- model.matrix(
+  reformulate(setdiff(names(train), c(target, drop_cols)), response = NULL),
+  data = train
+)
+y_train <- train[[target]]
+
+x_test <- model.matrix(
+  reformulate(setdiff(names(test), c(target, drop_cols)), response = NULL),
+  data = test
+)
+y_test <- test[[target]]
+
+# model.matrix crée un intercept en 1ère colonne, glmnet n'en a pas besoin
+x_train <- x_train[, -1, drop = FALSE]
+x_test  <- x_test[,  -1, drop = FALSE]
+
+```
+
+
+
+
+```{r modèle LASSO, message=FALSE, warning=FALSE}
+
+
+set.seed(2025)
+cv_fit <- cv.glmnet(
+  x = x_train,
+  y = y_train,
+  alpha = 1,        # LASSO 
+  nfolds = 10,
+  standardize = TRUE
+)
+
+# Deux choix classiques : lambda.min (meilleur CV) et lambda.1se (plus parcimonieux)
+lambda_min <- cv_fit$lambda.min
+lambda_1se <- cv_fit$lambda.1se 
+
+#  Prédictions
+pred_train_min <- as.numeric(predict(cv_fit, newx = x_train, s = lambda_min))
+pred_test_min  <- as.numeric(predict(cv_fit, newx = x_test,  s = lambda_min))
+
+pred_train_1se <- as.numeric(predict(cv_fit, newx = x_train, s = lambda_1se))
+pred_test_1se  <- as.numeric(predict(cv_fit, newx = x_test,  s = lambda_1se))
+
+#  RMSE (échelle originale)
+rmse <- function(y, yhat) sqrt(mean((y - yhat)^2, na.rm = TRUE))
+
+rmse_train_min <- rmse(y_train, pred_train_min)
+rmse_test_min  <- rmse(y_test,  pred_test_min)
+
+rmse_train_1se <- rmse(y_train, pred_train_1se)
+rmse_test_1se  <- rmse(y_test,  pred_test_1se)
+
+c(
+  rmse_train_lambda_min = rmse_train_min,
+  rmse_test_lambda_min  = rmse_test_min,
+  rmse_train_lambda_1se = rmse_train_1se,
+  rmse_test_lambda_1se  = rmse_test_1se
+)
+
+
+```
+
+## Modèle RIDGE
+
+```{r modèle RIDGE, message=FALSE, warning=FALSE}
+
+library(glmnet)
+
+
+cv_ridge <- cv.glmnet(
+  x_train,
+  y_train,
+  alpha = 0,   # Ridge
+  nfolds = 10,
+  standardize = TRUE
+)
+
+lambda_ridge <- cv_ridge$lambda.min
+
+pred_train_ridge <- predict(cv_ridge, newx = x_train, s = lambda_ridge)
+pred_test_ridge  <- predict(cv_ridge, newx = x_test,  s = lambda_ridge)
+
+rmse_train_ridge <- rmse(y_train, pred_train_ridge)
+rmse_test_ridge  <- rmse(y_test,  pred_test_ridge)
+
+c(
+  rmse_train_lambda_min = rmse_train_ridge,
+  rmse_test_lambda_min  = rmse_test_,
+  rmse_train_lambda_1se = rmse_train_1se,
+  rmse_test_lambda_1se  = rmse_test_1se
+)
+
+```
+
+## modèle GAM
+
+```{r modèle GAM, message=FALSE, warning=FALSE}
+install.packages("mgcv")
+library(mgcv)
+
+gam_fit <- gam(
+  implied_vol_ref ~ 
+    s(realized_vol_short) +
+    s(realized_vol_long4) +
+    s(log_vol_total) +
+    s(market_vol_index) +
+    PutCall_OI +
+    pcvol_x_mkt +
+    option_depth,
+  data = train,
+  method = "REML"
+)
+
+pred_train_gam <- predict(gam_fit, newdata = train)
+pred_test_gam  <- predict(gam_fit, newdata = test)
+
+rmse_train_gam <- rmse(train$implied_vol_ref, pred_train_gam)
+rmse_test_gam  <- rmse(test$implied_vol_ref,  pred_test_gam)
+
+rmse_train_gam
+rmse_test_gam
+
+```
+```{r modèle GAM, message=FALSE, warning=FALSE}
+
+rmse_train_gam <- rmse(train$implied_vol_ref, pred_train_gam)
+rmse_test_gam  <- rmse(test$implied_vol_ref,  pred_test_gam)
+
+rmse_train_gam
+rmse_test_gam
+
+```
 
 
