@@ -160,7 +160,7 @@ l'hétérogénéité en termes de liquidité et d'activité de trading.
 
 ```{r summary-stats}
 var_numeriques <- DATA %>% 
-  select(where(is.numeric))
+  dplyr::select(where(is.numeric))
 
 tab <- var_numeriques %>%
   summarise(across(
@@ -244,7 +244,7 @@ de la journée.
 vars <- c("call_volume", "put_volume")
 
 train_long <- DATA %>%
-  select(all_of(intersect(vars, names(DATA)))) %>%
+  dplyr::select(all_of(intersect(vars, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
   mutate(Value_log = log1p(Value)) 
 
@@ -271,7 +271,7 @@ nombre de contrats call et put encore ouverts à la fin de la journée.
 vars <- c("call_oi", "put_oi")
 
 train_long <- DATA %>%
-  select(all_of(intersect(vars, names(DATA)))) %>%
+  dplyr::select(all_of(intersect(vars, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
   mutate(Value_log = log1p(Value)) 
 
@@ -330,7 +330,7 @@ library(ggplot2)
 vars <- c("total_contracts")
 
 train_long <- DATA %>%
-  select(all_of(intersect(vars, names(DATA)))) %>%
+  dplyr::select(all_of(intersect(vars, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
   mutate(Value_log = log1p(Value)) 
 
@@ -362,7 +362,7 @@ vars <- c("strike_dispersion")
 
 
 train_long <- DATA %>%
-  select(all_of(intersect(vars, names(DATA)))) %>%
+  dplyr::select(all_of(intersect(vars, names(DATA)))) %>%
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
   mutate(Value_log = log1p(Value)) 
 
@@ -632,7 +632,7 @@ ggplot(vol_by_asset, aes(x = reorder(asset_id, mean_vol), y = mean_vol)) +
     **structurellement plus volatils** On pense donc à considérer des
     effets fixes par asset dans le modèle.
 
-# III.  Split et feature engineering
+# III. Split et feature engineering
 
 ## 3.1 Variable lag
 
@@ -777,7 +777,7 @@ assets_avec_na <- unique(train$asset_id[!complete.cases(train)])
 
 ```{r summary-numeric, message=FALSE, warning=FALSE}}
 var_numeriques <- train %>% 
-  select(where(is.numeric))
+  dplyr::select(where(is.numeric))
 
 tab <- var_numeriques %>%
   summarise(across(
@@ -1626,6 +1626,23 @@ rmse_train
 
 # VI. Modèle à effets mixtes
 
+On a remarqué que nos données présentent une structure hiérarchique : la
+volatilité de certains asset est systématiquement plus élevée que
+d'autres. Par-exemple, la volatilité implicite des actions de Tesla est
+constamment plus importante que celles de Microsoft.
+
+Autrement dit, il existe des niveaux de bases pour la volatilité de
+chaque asset et les observations des assets d'une même entreprise sont
+corrélées entre elles. Ce regroupement en classes est ignoré par la
+régression classique.
+
+Un moyen de prendre cela en considération est d'utiliser un modèle à
+effets mixtes, qui combine :
+
+1.  **Effets fixes** : Relations universelles valables pour tous les
+    assets
+2.  **Effets aléatoires** : Variations spécifiques à chaque asset
+
 ```{r}
 library(lme4)        # Modèles à effets mixtes
 library(lmerTest)    # P-values pour effets fixes
@@ -1652,6 +1669,12 @@ obs_per_asset <- DATA %>%
   )
 ```
 
+Pour ne pas avoir un nombre de classes excessif, on peut retirer les
+assets avec moins de 10 observations, qui ne seront de toute façon pas
+importantes dans la prédiction de la volatilité. La différence dans le
+nombre d'observations des assets est également un indicateur qui nous
+pousse à utiliser ce modèle.
+
 ```{r}
 cat("\nObservations par asset:\n")
 print(obs_per_asset)
@@ -1664,8 +1687,8 @@ train_filtered <- train %>%
   ungroup()
 
 cat("\nAprès filtrage (min", min_obs, "obs par asset):\n")
-cat("  Observations restantes:", nrow(data_filtered), "\n")
-cat("  Assets restants:", length(unique(data_filtered$asset_id)), "\n\n")
+cat("  Observations restantes:", nrow(train_filtered), "\n")
+cat("  Assets restants:", length(unique(train_filtered$asset_id)), "\n\n")
 ```
 
 ```{r}
@@ -1676,6 +1699,13 @@ test_filtered <- test %>%
 ```
 
 ## 6.1 Modèle avec intercept aléatoire
+
+Le modèle à effets mixtes le plus simple consiste à ne considérer que
+l'intercept comme étant aléatoire. Autrement dit, chaque asset a son
+**propre niveau de base** (intercept), mais la **relation** entre
+variables explicatives et cible est la **même pour tous.** Quand les
+assets diffèrent seulement par leur niveau moyen de volatilité, il
+permets une bonne prédiction.
 
 ```{r}
 train_filtered
@@ -1765,8 +1795,6 @@ r2_ri_test <- calc_r2(test_filtered$implied_vol_ref, pred_ri_test)
 ```
 
 ```{r}
-
-
 cat("=== PERFORMANCES MODÈLE RI ===\n")
 cat("RMSE Train:", round(rmse_ri_train, 4), "\n")
 cat("RMSE Test:", round(rmse_ri_test, 4), "\n")
@@ -1774,7 +1802,18 @@ cat("R² Train:", round(r2_ri_train, 4), "\n")
 cat("R² Test:", round(r2_ri_test, 4), "\n\n")
 ```
 
-## 6.2 Modèle avec intercept et slope aléatoires
+```{r}
+rmse_ri_test
+
+```
+
+## 6.2 Modèle avec intercept et pentes aléatoires
+
+En rajoutant des pentes aléatoires, on a cette fois que chaque asset a
+son propre niveau de base et que sa sensibilité aux variables
+explicatives varie. L'interprétation de ce modèle est que certaines
+entreprises réagissent plus fortement aux changements macroéconomiques
+que d'autres.
 
 ```{r}
 
@@ -1835,6 +1874,13 @@ cat("RMSE Test:", round(rmse_ris_test, 4), "\n")
 cat("R² Train:", round(r2_ris_train, 4), "\n")
 cat("R² Test:", round(r2_ris_test, 4), "\n\n")
 ```
+
+```{r}
+
+```
+
+On obtient un RMSE de 9.4 sur le train et 10 sur le test, en gardant un
+R2 convenable.
 
 ## 6.3 Analyse des effets aléatoires
 
@@ -1933,7 +1979,7 @@ p4 <- ggplot(top20_plot, aes(x = reorder(asset_id, Intercept), y = Intercept)) +
 
 # 5. Prédictions vs Réel (Test set)
 pred_vs_actual <- data.frame(
-  Actual = test$implied_vol_ref,
+  Actual = test_filtered$implied_vol_ref,
   Predicted = pred_ris_test
 )
 
@@ -1951,12 +1997,72 @@ p5 <- ggplot(pred_vs_actual, aes(x = Actual, y = Predicted)) +
 ```
 
 ```{r}
-p1
-p2
-p3
-p4
 p5
 ```
+
+------------------------------------------------------------------------
+
+## 
+
+Le R² de 81.19% indique que le modèle parvient à expliquer plus de
+quatre cinquièmes de la variance totale de la volatilité implicite. Dans
+le contexte des marchés financiers, où la volatilité est notoirement
+difficile à prévoir en raison de sa nature stochastique et de sa
+dépendance à de nombreux facteurs non observables, ce résultat constitue
+une bone performancee. Les 18.81% de variance non expliquée reflètent la
+part d'incertitude inhérente aux marchés financiers, incluant l'impact
+d'événements imprévisibles, de chocs de liquidité et de facteurs
+comportementaux difficiles à modéliser.
+
+On observe cependant une tendance du modèle à sous-estimer les
+volatilités extrêmes et sur-estimer les volatilités trop faibles.
+
+```{r}
+p4
+```
+
+L'actif identifié par le ticker OILD présente un effet aléatoire
+d'intercept d'environ 95 points, et est donc structurellement perçu
+comme risqué par le marché. On observe ainsi un continuum d'actifs à
+risque élevé.
+
+L'identification de ces actifs à volatilité structurellement élevée a
+des implications pratiques majeures pour la gestion de portefeuille et
+le pricing d'options.
+
+```{r}
+p3
+```
+
+Cette relation négative entre intercept et pente reflète un principe
+économique plus général : la loi des rendements marginaux décroissants
+de l'information. Pour un actif déjà perçu comme très volatile, une
+information additionnelle confirmant cette volatilité a un impact
+marginal limité. Pour un actif perçu comme stable, la même information a
+un impact majeur car elle remet en question les croyances préalables du
+marché.
+
+La présence de cette corrélation négative valide également l'approche
+méthodologique du modèle à effets mixtes, qui permet aux pentes de
+varier d'un actif à l'autre. Un modèle à effets fixes, imposant une
+pente identique pour tous les actifs, ne pourrait pas capturer cette
+hétérogénéité fondamentale.
+
+```{r}
+p2
+```
+
+L"hypothèse de normalité des effets aléatoires est raisonnablement
+satisfaite pour les pentes.
+
+```{r}
+p1
+```
+
+Cette distribution a une asymétrie prononcée vers la droite,
+contrairement à la distribution des pentes qui présentait une forme
+approximativement normale. On a donc sur le marché une population non
+négligeable d'actifs intrinsèquement risqués.
 
 ```{r}
 
@@ -1996,6 +2102,12 @@ p6 <- ggplot(pred_with_ci, aes(x = implied_vol_ref, y = fit)) +
 ```{r}
 p6
 ```
+
+On observe une expansion progressive de l'incertitude avec le niveau de
+volatilité , à cause du phénomène d'hétéroscédasticité des actifs très
+volatiles.
+
+## 
 
 ```{r}
 
