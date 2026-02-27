@@ -2230,3 +2230,207 @@ p6
 On observe une expansion progressive de l'incertitude avec le niveau de
 volatilité , à cause du phénomène d'hétéroscédasticité des actifs très
 volatiles.
+
+
+# Évaluation des modèles sur l’ensemble des données
+
+Dans cette partie, on estime l’ensemble des modèles sur le dataset complet train_final, obtenu en combinant train_filtered et test_filtered.
+
+L’objectif n’est plus d’évaluer la performance hors-échantillon, mais d’analyser la capacité d’ajustement globale des différents modèles lorsqu’ils sont estimés sur toutes les observations disponibles. Il s’agit donc d’une évaluation in-sample.
+
+Les modèles comparés sont :
+
+* Régression linéaire naïve (OLS) utilisant toutes les variables numériques ;
+* LASSO avec les variables retenues après VIF (*LASSO_old*) ;
+* LASSO avec ajout de termes quadratiques (*LASSO_new*) ;
+* Modèle à effets mixtes avec intercept aléatoire (*Mixed RI*) ;
+* Modèle à effets mixtes avec intercept et pente aléatoires (*Mixed RIS*).
+
+Pour chaque modèle, nous calculons :
+
+* le **RMSE** (Root Mean Squared Error),
+* le **R²**.
+
+```{r rmse_fullsample_ols_lasso_using_train_final, message=FALSE, warning=FALSE}
+library(glmnet)
+library(data.table)
+library(knitr)
+library(kableExtra)
+
+
+# train_final est de  bind_rows(train_filtered, test_filtered) (utilisé deja dans Effet mixed)
+# transferer à data.table
+train_final_dt <- as.data.table(train_final)
+
+stopifnot("implied_vol_ref" %in% names(train_final_dt))
+
+calc_rmse_final <- function(actual, predicted) sqrt(mean((actual - predicted)^2, na.rm = TRUE))
+calc_r2_final   <- function(actual, predicted) 1 - sum((actual - predicted)^2, na.rm = TRUE) /
+  sum((actual - mean(actual, na.rm = TRUE))^2, na.rm = TRUE)
+
+# =========================================================
+# A) OLS (sur toutes les variables numériques)
+# =========================================================
+vars_num_final <- names(train_final_dt)[sapply(train_final_dt, is.numeric)]
+vars_num_final <- setdiff(vars_num_final, "implied_vol_ref")
+
+form_lm_final <- reformulate(vars_num_final, response = "implied_vol_ref")
+
+model_lm_final <- lm(form_lm_final, data = as.data.frame(train_final_dt))
+
+pred_lm_final <- predict(model_lm_final, newdata = train_final_dt)
+
+rmse_lm_final <- calc_rmse_final(train_final_dt$implied_vol_ref, pred_lm_final)
+r2_lm_final   <- calc_r2_final(train_final_dt$implied_vol_ref, pred_lm_final)
+
+# =========================================================
+# B) LASSO_old (vars VIF)
+# =========================================================
+vars_lasso_old_final <- c(
+  "strike_dispersion",
+  "call_volume",
+  "put_volume",
+  "call_oi",
+  "put_oi",
+  "maturity_count",
+  "total_contracts",
+  "realized_vol_short",
+  "realized_vol_long4",
+  "market_vol_index"
+)
+
+# sécurité : garder uniquement les variables existantes
+vars_lasso_old_final <- intersect(vars_lasso_old_final, names(train_final_dt))
+
+train_lasso_old_final <- train_final_dt[, c("implied_vol_ref", vars_lasso_old_final), with = FALSE]
+x_old_final <- model.matrix(implied_vol_ref ~ ., data = train_lasso_old_final)[, -1]
+y_old_final <- train_lasso_old_final$implied_vol_ref
+
+set.seed(2025)
+cv_lasso_old_final <- cv.glmnet(
+  x_old_final, y_old_final,
+  alpha = 1,
+  nfolds = 5,
+  standardize = TRUE
+)
+
+pred_lasso_old_final <- as.numeric(predict(cv_lasso_old_final, s = "lambda.1se", newx = x_old_final))
+
+rmse_lasso_old_final <- calc_rmse_final(y_old_final, pred_lasso_old_final)
+r2_lasso_old_final   <- calc_r2_final(y_old_final, pred_lasso_old_final)
+
+# =========================================================
+# C) LASSO_new (vars + termes quadratiques)
+# =========================================================
+# créer les termes si absents
+if (!("rv_short_sq" %in% names(train_final_dt))) {
+  stopifnot("realized_vol_short" %in% names(train_final_dt))
+  train_final_dt[, rv_short_sq := realized_vol_short^2]
+}
+if (!("rv_long_sq" %in% names(train_final_dt))) {
+  stopifnot("realized_vol_long4" %in% names(train_final_dt))
+  train_final_dt[, rv_long_sq := realized_vol_long4^2]
+}
+if (!("mkt_sq" %in% names(train_final_dt))) {
+  stopifnot("market_vol_index" %in% names(train_final_dt))
+  train_final_dt[, mkt_sq := market_vol_index^2]
+}
+
+vars_lasso_new_final <- c(
+  "strike_dispersion","put_oi","maturity_count",
+  "realized_vol_short","realized_vol_long4","market_vol_index",
+  "rv_short_sq","rv_long_sq","mkt_sq"
+)
+
+vars_lasso_new_final <- intersect(vars_lasso_new_final, names(train_final_dt))
+
+train_lasso_new_final <- train_final_dt[, c("implied_vol_ref", vars_lasso_new_final), with = FALSE]
+x_new_final <- model.matrix(implied_vol_ref ~ ., data = train_lasso_new_final)[, -1]
+y_new_final <- train_lasso_new_final$implied_vol_ref
+
+set.seed(2025)
+cv_lasso_new_final <- cv.glmnet(
+  x_new_final, y_new_final,
+  alpha = 1,
+  nfolds = 5,
+  standardize = TRUE
+)
+
+pred_lasso_new_final <- as.numeric(predict(cv_lasso_new_final, s = "lambda.1se", newx = x_new_final))
+
+rmse_lasso_new_final <- calc_rmse_final(y_new_final, pred_lasso_new_final)
+r2_lasso_new_final   <- calc_r2_final(y_new_final, pred_lasso_new_final)
+
+
+# Tableau 
+perf_full_final <- data.frame(
+  Modele = c("OLS_full", "LASSO_old_full", "LASSO_new_full"),
+  Lambda = c(NA,
+             round(cv_lasso_old_final$lambda.1se, 6),
+             round(cv_lasso_new_final$lambda.1se, 6)),
+  RMSE = round(c(rmse_lm_final, rmse_lasso_old_final, rmse_lasso_new_final), 6),
+  R2   = round(c(r2_lm_final,   r2_lasso_old_final,   r2_lasso_new_final),   6)
+)
+
+kable(perf_full_final,
+      caption = "RMSE in-sample sur le dataset complet (train_final)") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+
+
+```{r final_combined_table_no_lambda, message=FALSE, warning=FALSE}
+
+# enlever lamda
+perf_lasso_ols_full <- perf_full_final %>%
+  dplyr::select(Modele, RMSE, R2)
+
+#  Mixed RI
+perf_ri_full <- data.frame(
+  Modele = "Mixed_RI_full",
+  RMSE   = round(rmse_ri_train_final, 6),
+  R2     = round(r2_ri_train_final,   6)
+)
+
+#  Mixed RIS (final)
+perf_ris_full <- data.frame(
+  Modele = "Mixed_RIS_full",
+  RMSE   = round(rmse_ris_train_final, 6),
+  R2     = round(r2_ris_train_final,   6)
+)
+
+# combiner
+perf_all_models_full <- dplyr::bind_rows(
+  perf_lasso_ols_full,
+  perf_ri_full,
+  perf_ris_full
+)
+
+# trier par RMSE
+perf_all_models_full <- perf_all_models_full %>%
+  arrange(RMSE)
+
+kable(
+  perf_all_models_full,
+  caption = "Comparaison des performances in-sample (dataset complet)",
+  align = "lrr"
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed")
+  )
+
+```
+
+Les modèles à effets mixtes dominent nettement les autres approches en termes de RMSE et de R².
+
+Le modèle avec intercept et pente aléatoires（notre modèle final) obtient la meilleure performance, avec un RMSE de 9.20 et un R² de 86.6%.
+
+Cela confirme que :
+
+il existe une hétérogénéité structurelle entre les assets ;
+
+la sensibilité aux variables macro-financières varie selon l’actif.
+
+En revanche, les modèles LASSO ne surpassent pas la régression linéaire classique dans cette évaluation in-sample.
+Cela s’explique par le biais introduit par la régularisation, qui pénalise les coefficients et réduit légèrement l’ajustement sur les données d’estimation.
