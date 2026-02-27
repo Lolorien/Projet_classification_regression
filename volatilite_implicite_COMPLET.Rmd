@@ -516,23 +516,26 @@ Elles capturent la dynamique historique de la variabilité des prix et
 constituent des prédicteurs naturels de la volatilité implicite, en
 raison de la persistance bien documentée de la volatilité dans le temps.
 
-```{r viz_realized_vol, echo=TRUE}
+```{r viz_realized_vol, fig.width=16, fig.height=8}
+
+library(patchwork)
 
 rv_cols <- grep("^realized_vol_", names(DATA), value = TRUE)
 
-for (v in rv_cols) {
-  p <- ggplot(DATA, aes(x = log1p(.data[[v]]))) +
-    geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
+plot_list <- lapply(rv_cols, function(v) {
+  ggplot(DATA, aes(x = log1p(.data[[v]]))) +
+    geom_histogram(bins = 50,
+                   fill = "#2C7FB8",
+                   color = "white") +
     labs(
-      title = paste0("Histogramme de ",v),
-      x     = paste0(v),
-      y     = "Frequence"
+      title = paste0("Histogramme de ", v),
+      x     = v,
+      y     = "Fréquence"
     ) +
     theme_minimal()
-  
-  print(p)
-}
+})
 
+wrap_plots(plot_list, ncol = 4)
 ```
 
 ```{r viz_realized_vol_2, echo=TRUE}
