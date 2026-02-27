@@ -119,6 +119,10 @@ DT::datatable(
 )
 ```
 
+Cet aperçu des premières lignes permet simplement de se familiariser avec la structure du jeu de données. Chaque ligne correspond à un actif à une date donnée, ce qui confirme que nous travaillons sur des données de type panel.
+
+On observe déjà des écarts importants entre les variables : les volumes et les open interests peuvent être très élevés, alors que des variables comme strike_dispersion ou maturity_count restent dans des ordres de grandeur beaucoup plus faibles.
+
 # 1.4 Vérification des valeurs manquantes
 
 ```{r valeur_manquantes, echo=TRUE}
@@ -181,6 +185,7 @@ bind_rows(plage_train, plage_test) %>%
 
 
 ```
+La figure présente la répartition temporelle des jeux de données d’entraînement et de test. On observe que la période de test succède directement à la période d’entraînement sans chevauchement.
 
 # II. Description détaillée des variables
 
@@ -219,12 +224,11 @@ tab %>%
   scroll_box(width = "100%", height = "450px")
 
 ```
-
-Cette section présente chaque variable disponible dans les jeux de
-données.
+Le tableau présente les principales statistiques descriptives des variables numériques. 
+Dans l’ensemble, les ordres de grandeur sont cohérents. En revanche, les variables de type realized_vol présentent des valeurs maximales extrêmement élevées, très éloignées de leurs médianes (autour de 30–45). Ces écarts suggèrent la présence de pics isolés. En examinant les données, on observe que ces valeurs correspondent à des variations brutales sur une seule journée, peu plausibles d’un point de vue économique. 
+Cette section présente chaque variable disponible dans les jeux de données.
 
 ## 2.2 Variables d'identification
-
 ### asset_id
 
 **`asset_id`** identifie l’actif sous-jacent associé à chaque
@@ -261,6 +265,7 @@ date_summary <- daily_counts %>%
 print(date_summary)
 
 ```
+Nos données d'entraînement couvrent la période comprise entre le 14 octobre 2019 et le 31 décembre 2021, soit un total de 544 jours.
 
 ## 2.3 Variables d'activité de trading
 
@@ -285,6 +290,14 @@ train_long <- DATA %>%
                       values_to = "Value") %>%
   dplyr::mutate(Value_log = log1p(Value))
 
+ggplot(train_long, aes(x = Value)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes  — Variables d'activité et de taille",
+    x = "valeur", y = "Fréquence"
+  )
+
 ggplot(train_long, aes(x = Value_log)) +
    geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
   facet_wrap(~ Variable, scales = "free") +
@@ -293,7 +306,7 @@ ggplot(train_long, aes(x = Value_log)) +
     x = "log(1 + valeur)", y = "Fréquence"
   )
 ```
-
+Les distributions de call_volume et put_volume sont très asymétriques à droite. En échelle brute, quelques valeurs extrêmement élevées étirent fortement l’axe horizontal, ce qui rend la lecture difficile. On observe une accumulation importante de valeurs proches de zéro, traduisant de nombreuses situations avec une activité faible ou inexistante. Cette concentration demeure visible même après la transformation log(1 + x).
 
 ```{r viz_call_put_volume_2, echo=TRUE}
 
@@ -311,6 +324,7 @@ p_volumes <- var_numeriques %>%
 print(p_volumes)
 ```
 
+Les deux distributions présentent par ailleurs une structure très similaire, ce qui suggère une forte corrélation potentielle entre call_volume et put_volume. Cette dépendance devra être prise en compte lors de la phase de modélisation.
 
 ### call_oi et put_oi
 
@@ -328,8 +342,6 @@ le risque, potentiellement associée à une volatilité implicite plus
 élevée.
 
 ```{r viz_call_put_oi, echo=TRUE}
-
-
 vars <- c("call_oi", "put_oi")
 
 train_long <- DATA %>%
@@ -339,15 +351,23 @@ train_long <- DATA %>%
                       values_to = "Value") %>%
   dplyr::mutate(Value_log = log1p(Value))
 
+ggplot(train_long, aes(x = Value)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes — Call et Put OI",
+    x = "Valeur", y = "Fréquence"
+  )
+
 ggplot(train_long, aes(x = Value_log)) +
    geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
   facet_wrap(~ Variable, scales = "free") +
   labs(
-    title = "Histogrammes (échelle log1p) — Call et Put volume",
+    title = "Histogrammes (échelle log1p) — Call et Put OI",
     x = "log(1 + valeur)", y = "Fréquence"
   )
-
 ```
+Les variables call_oi et put_oi présentent des distributions très similaires à celles des volumes : forte asymétrie à droite et accumulation marquée de valeurs proches de zéro. La transformation log(1 + x) améliore la lisibilité sans modifier cette structure générale.
 
 ```{r viz_call_put_oi_2, echo=TRUE}
 
@@ -364,7 +384,7 @@ p_oi <- var_numeriques %>%
 
 print(p_oi)
 ```
-
+Comme pour les volumes, la similarité entre calls et puts suggère une corrélation élevée entre ces deux variables.
 
 ## 2.4 Caractéristiques de la chaîne d'options
 
@@ -379,7 +399,24 @@ refléter une liquidité accrue et une richesse d’information plus
 importante, susceptibles d’améliorer la formation et la précision de la
 volatilité implicite.
 
+```{r viz_maturity_count, echo=TRUE}
 
+vars <- c("maturity_count")
+
+train_long <- DATA %>%
+  dplyr::select(dplyr::all_of(intersect(vars, names(DATA)))) %>%
+  tidyr::pivot_longer(cols = dplyr::everything(),
+                      names_to = "Variable",
+                      values_to = "Value") %>%
+  dplyr::mutate(Value_log = log1p(Value))
+
+ggplot(train_long, aes(x = Value)) +
+  geom_bar(fill = "#2C7FB8", color = "white") +
+  labs(title = "Barplot de maturity_count",
+       x = "Value", y = "Fréquence") +
+  theme_minimal()
+```
+Le barplot du nombre de maturités disponibles par observation montre une distribution fortement concentrée sur un faible nombre de maturités. La majorité des observations présente entre 2 et 5 maturités, tandis que les valeurs plus élevées restent rares.
 
 ## 2.7 `total_contracts`
 
@@ -403,14 +440,23 @@ train_long <- DATA %>%
   dplyr::mutate(Value_log = log1p(Value))
 
 
+ggplot(train_long, aes(x = Value)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes  — total_contrats",
+    x = "Valeur", y = "Fréquence"
+  )
+
 ggplot(train_long, aes(x = Value_log)) +
    geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
   facet_wrap(~ Variable, scales = "free") +
   labs(
-    title = "Histogrammes (échelle log1p) — total_contrats",
+    title = "Histogrammes (échelle log1p)  — total_contrats",
     x = "log(1 + valeur)", y = "Fréquence"
   )
 ```
+On observe néanmoins que la grande majorité des observations se situe en dessous de 1 500 contrats. Les valeurs extrêmes restent peu fréquentes mais créent un écart important entre le minimum et le maximum.
 
 ###`strike_dispersion`
 
@@ -432,14 +478,23 @@ train_long <- DATA %>%
                       values_to = "Value") %>%
   dplyr::mutate(Value_log = log1p(Value))
 
+ggplot(train_long, aes(x = Value)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p)  — strike_dispersion",
+    x = "Value", y = "Fréquence"
+  )
+
 ggplot(train_long, aes(x = Value_log)) +
    geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
   facet_wrap(~ Variable, scales = "free") +
   labs(
-    title = "Histogrammes (échelle log1p) — strike_dispersion",
+    title = "Histogrammes  — strike_dispersion",
     x = "log(1 + valeur)", y = "Fréquence"
   )
 ```
+La variable strike_dispersion présente également une asymétrie à droite, bien que moins marquée que pour les variables d’activité. En échelle brute, la majorité des observations se concentre en dessous de 50, tandis qu’un nombre limité de cas affiche des niveaux plus élevés.
 
 ## 2.5 Distribution des volatilités
 
@@ -472,8 +527,11 @@ for (v in rv_cols) {
 
 ```
 
+Les graphiques des variables realized_vol_ montrent des distributions très similaires quelle que soit la fenêtre temporelle considérée. En échelle log(1 + x), les distributions apparaissent relativement centrées et proches d’une forme symétrique.
 
+On observe néanmoins la présence de quelques valeurs extrêmement élevées, qui se distinguent nettement du reste de la distribution. Ces observations restent marginales en fréquence mais peuvent influencer les estimations.
 
+Comme indiqué précédemment, ces valeurs aberrantes seront traitées dans la suite de l’analyse afin de limiter leur impact sur la modélisation.
 
 
 ```{r viz_realized_vol_2, echo=TRUE}
@@ -498,7 +556,6 @@ vols <- var_numeriques %>%
 
 print(vols)
 ```
-
 
 ### `market_vol_index`
 
@@ -532,6 +589,8 @@ ggplot(DATA2, aes(x = obs_date, y = market_vol_index)) +
   theme_minimal()
 
 ```
+L’histogramme du market_vol_index montre que la majorité des observations se concentre autour d’un niveau proche de 20. Les valeurs supérieures à 40 restent relativement rares et correspondent à des périodes de tension accrue sur les marchés. L’évolution temporelle confirme cette lecture : on observe un pic marqué lors de la crise du Covid-19, suivi d’un retour progressif vers des niveaux plus modérés.
+
 
 ### Analyse de la variable cible
 
