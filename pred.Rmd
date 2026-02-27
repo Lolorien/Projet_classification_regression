@@ -1,0 +1,2232 @@
+---
+title: "Prédiction de la volatilité implicite"
+author: "Loraine_Dicko"
+date: "2026-02-24"
+output: 
+  html_document:
+    code_folding: hide
+    theme: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+# I. Introduction et contexte de l’étude
+
+Les marchés d’options jouent un rôle central dans la formation des
+anticipations de marché, notamment à travers la **volatilité
+implicite**, qui reflète les attentes des investisseurs quant à la
+variabilité future des prix des actifs sous-jacents.
+
+Contrairement à la volatilité réalisée, qui est calculée à partir de
+données historiques de prix, la volatilité implicite est une mesure
+**forward-looking**, extraite directement des prix des options. Elle
+incorpore ainsi à la fois l’information disponible, l’aversion au risque
+et les anticipations collectives des acteurs de marché.
+
+L’objectif de ce projet est de **construire un modèle prédictif de la
+volatilité implicite de référence** (`implied_vol_ref`) à partir : - des
+caractéristiques du marché des options, - des mesures de volatilité
+passée de l’actif sous-jacent, - et d’un indicateur de volatilité de
+marché agrégé.
+
+Le projet s’inscrit dans une démarche appliquée, combinant analyse
+descriptive approfondie, sélection de variables et modélisation
+économétrique interprétable.
+
+# 1.1. Présentation générale des données
+
+Les données utilisées dans cette étude proviennent du marché des options
+actions et sont organisées sous la forme d’observations journalières.
+Chaque ligne du jeu de données correspond à un couple *(asset_id,
+obs_date)*, c’est-à-dire à un actif sous-jacent donné observé à une date
+donnée.
+
+Pour chaque observation, le jeu de données regroupe : - des informations
+agrégées sur l’activité de trading des options, - des caractéristiques
+de la chaîne d’options, - plusieurs mesures de volatilité historique, -
+ainsi qu’une mesure cible de volatilité implicite de référence.
+
+Deux jeux de données distincts sont fournis : - un **jeu
+d’entraînement**, contenant la variable cible, - un **jeu de test**, sur
+lequel les prédictions finales devront être produites.
+
+## Package
+
+```{r  message = FALSE,warning=FALSE}
+
+library(tidyverse)
+library(lubridate)
+library(gridExtra)
+library(ggfortify) 
+library(rsample)   
+library(broom)
+library(Metrics)
+library(knitr)
+library(kableExtra)
+library(corrplot)
+library(dplyr)
+library(ggplot2)
+library(moments)        # Pour KableExtra 
+library(ggridges)       # Ridge plots
+library(MASS)           # Box-Cox transformation
+library(car)            # VIF
+library(lme4)           # Modèles mixtes
+library(zoo)            # Séries temporelles
+library(lattice)        # Graphiques de diagnostic
+library(performance)# ICC et métriques
+library(data.table)
+library(tidyr)
+library(caret)
+library(glmnet)
+library(Matrix)
+library(earth)
+library(DT)
+
+
+```
+
+# 1.2. Chargement des données
+
+```{r eval=TRUE}
+DATA <- read.csv("../train_ISF.csv", stringsAsFactors = FALSE)
+TEST <- read.csv("../test_ISF.csv", stringsAsFactors = FALSE)
+
+```
+
+```{r}
+DATA <- read.csv("~/Downloads/train_ISF.csv", stringsAsFactors = FALSE)
+TEST <- read.csv("~/Downloads/test_ISF.csv", stringsAsFactors = FALSE)
+```
+
+# 1.3 Aperçu du dataset
+
+```{r aperçu_table, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+DT::datatable(
+  DATA %>% dplyr::select(dplyr::where(is.numeric)) %>% head(200),
+  options = list(
+    pageLength = 10,
+    lengthMenu = c(5, 10, 25, 50),
+    scrollX = TRUE
+  ),
+  rownames = FALSE,
+  caption = htmltools::tags$caption(
+    style = 'caption-side: top; text-align: left; font-weight: bold;',
+    "Aperçu des données (train) — premières lignes"
+  )
+)
+```
+
+# 1.4 Vérification des valeurs manquantes
+
+```{r valeur_manquantes, echo=TRUE}
+
+na_counts <- sapply(DATA, function(x) sum(is.na(x)))
+
+na_table <- data.frame(
+  Variable = names(na_counts),
+  NA_count = as.integer(na_counts),
+  row.names = NULL,
+  check.names = FALSE
+)
+
+#affichage
+kable(na_table, format = "html",
+      caption = "Nombre de valeurs manquantes (NA) par variable") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover", "condensed"))%>%
+  scroll_box(width = "100%", height = "450px")
+```
+
+Le dataset ne contient aucune valeur manquante.
+
+# 1.5
+
+```{r nb_observation, echo=TRUE}
+
+counts <- as.integer(table(DATA[["asset_id"]]))
+
+h <- hist(counts, breaks = "FD", plot = FALSE)
+plot(h$mids, log10(h$counts + 1), type = "h",
+     main = "Histogramme (axe Y en log10)",
+     xlab = "Nombre d'observations",
+     ylab = "log10(nombre d'assets + 1)")
+
+```
+
+On remarque que les assets n'ont pas le même nombre d'observation.
+
+# 1.6 Plage temporelle des données
+
+```{r plage_temp, echo=TRUE}
+ 
+plage_train <- DATA %>%
+  distinct(obs_date) %>%
+  mutate(dataset = "Train")
+
+plage_test <- TEST %>%
+  distinct(obs_date) %>%
+  mutate(dataset = "Test")
+
+# Représentation de la plage
+bind_rows(plage_train, plage_test) %>%
+  ggplot(aes(x = obs_date, y = dataset, color = dataset)) +
+  geom_point(size = 0.5, alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "Plage temporelle des données",
+       x = "Date", y = "") +
+  scale_color_manual(values = c("Train" = "steelblue", "Test" = "coral"))
+
+
+```
+
+# II. Description détaillée des variables
+
+# 2.1 Statistique descriptive
+
+```{r summary-numeric, message=FALSE, warning=FALSE}
+
+
+var_numeriques <- DATA %>%
+  dplyr::select(dplyr::where(is.numeric))
+
+tab <- var_numeriques %>%
+  summarise(across(
+    everything(),
+    list(
+      Min = ~min(., na.rm = TRUE),
+      Median = ~median(., na.rm = TRUE),
+      Mean = ~mean(., na.rm = TRUE),
+      Max = ~max(., na.rm = TRUE)
+    ),
+    .names = "{.col}__{.fn}"
+  )) %>%
+  pivot_longer(everything(),
+               names_to = c("Variable", "Stat"),
+               names_sep = "__",
+               values_to = "Value") %>%
+  pivot_wider(names_from = Stat, values_from = Value) %>%
+  arrange(Variable) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4)))
+
+tab %>%
+  kable(caption = "Résumé des variables numériques : Min, Médiane, moyenne, Max", align = "l") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover", "condensed")) %>%
+  scroll_box(width = "100%", height = "450px")
+
+```
+
+Cette section présente chaque variable disponible dans les jeux de
+données.
+
+## 2.2 Variables d'identification
+
+### asset_id
+
+**`asset_id`** identifie l’actif sous-jacent associé à chaque
+observation. Il s’agit d’un identifiant catégoriel correspondant au
+ticker de l’actif coté.
+
+Cette variable permet de capturer l’hétérogénéité entre actifs,
+notamment en termes de liquidité, de profil de risque et de comportement
+de volatilité.
+
+### `obs_date` — Date d’observation
+
+La variable `obs_date` correspond à la date journalière à laquelle
+l’observation est réalisée.
+
+Elle introduit une dimension temporelle essentielle, permettant
+d’identifier la période couverte par les données, d’éventuels régimes de
+marché ou des épisodes de stress caractérisés par une volatilité élevée.
+
+```{r obs_viz, message=FALSE, warning=FALSE}
+
+daily_counts <- DATA %>%
+  count(obs_date, name = "n_obs") %>%
+  arrange(obs_date)
+
+
+date_summary <- daily_counts %>%
+  summarise(
+    date_min = min(obs_date, na.rm = TRUE),
+    date_max = max(obs_date, na.rm = TRUE),
+    n_days  = n()
+  )
+
+print(date_summary)
+
+```
+
+## 2.3 Variables d'activité de trading
+
+### call_volume et put_volume
+
+Les variables **`call_volume`** et **`put_volume`** mesurent
+respectivement le nombre total de contrats call et put échangés au cours
+de la journée.
+
+Ces variables reflètent directement l’intensité de l’activité de marché
+et peuvent être interprétées comme des indicateurs de liquidité et
+d’intérêt spéculatif ou de couverture.
+
+```{r viz_call_put_volume, echo=TRUE}
+
+vars <- c("call_volume", "put_volume")
+
+train_long <- DATA %>%
+  dplyr::select(dplyr::all_of(intersect(vars, names(DATA)))) %>%
+  tidyr::pivot_longer(cols = dplyr::everything(),
+                      names_to = "Variable",
+                      values_to = "Value") %>%
+  dplyr::mutate(Value_log = log1p(Value))
+
+ggplot(train_long, aes(x = Value_log)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p) — Variables d'activité et de taille",
+    x = "log(1 + valeur)", y = "Fréquence"
+  )
+```
+
+```{r viz_call_put_volume_2, echo=TRUE}
+
+p_volumes <- var_numeriques %>%
+  dplyr::select(contains("volume")) %>%
+  dplyr::select(-contains("_vol_")) %>%  # Exclure realized_vol
+  mutate(across(everything(), ~log(. + 1))) %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(x = value, y = name, fill = name)) +
+  geom_density_ridges(scale = 2.5, alpha = 0.7) +
+  theme_ridges() +
+  labs(title = "Volumes (log)", x = "", y = "") +
+  theme(legend.position = "none")
+
+print(p_volumes)
+```
+
+### call_oi et put_oi
+
+Les variables `call_oi` et `put_oi` correspondent respectivement au
+nombre de contrats call et put encore ouverts à la fin de la journée,
+c’est-à-dire non expirés et non exercés. Elles mesurent des stocks de
+positions, contrairement aux volumes qui capturent des flux journaliers
+d’échanges.
+
+L’open interest reflète un intérêt persistant des investisseurs pour
+l’actif sous-jacent. Un niveau élevé de `call_oi` peut traduire des
+anticipations haussières durables, tandis qu’un niveau élevé de `put_oi`
+est souvent interprété comme une demande soutenue de couverture contre
+le risque, potentiellement associée à une volatilité implicite plus
+élevée.
+
+```{r viz_call_put_oi, echo=TRUE}
+
+
+vars <- c("call_oi", "put_oi")
+
+train_long <- DATA %>%
+  dplyr::select(dplyr::all_of(intersect(vars, names(DATA)))) %>%
+  tidyr::pivot_longer(cols = dplyr::everything(),
+                      names_to = "Variable",
+                      values_to = "Value") %>%
+  dplyr::mutate(Value_log = log1p(Value))
+
+ggplot(train_long, aes(x = Value_log)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p) — Call et Put volume",
+    x = "log(1 + valeur)", y = "Fréquence"
+  )
+
+```
+
+```{r viz_call_put_oi_2, echo=TRUE}
+
+p_oi <- var_numeriques %>%
+  dplyr::select(contains("_oi")) %>%
+  mutate(across(everything(), ~log(. + 1))) %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(x = value, y = name, fill = name)) +
+  geom_density_ridges(scale = 2.5, alpha = 0.7) +
+  theme_ridges() +
+  labs(title = "Open Interest (log)", x = "", y = "") +
+  theme(legend.position = "none")
+
+
+print(p_oi)
+```
+
+## 2.4 Caractéristiques de la chaîne d'options
+
+### maturity_count
+
+La variable `maturity_count` indique le nombre d’échéances distinctes
+disponibles dans la chaîne d’options pour un actif donné à une date
+donnée.
+
+Une chaîne d’options comportant un grand nombre d’échéances peut
+refléter une liquidité accrue et une richesse d’information plus
+importante, susceptibles d’améliorer la formation et la précision de la
+volatilité implicite.
+
+## 2.7 `total_contracts`
+
+La variable `total_contracts` mesure le nombre total de contrats
+different d’options disponibles dans la chaîne associée à un actif et
+une date donnés.
+
+Elle constitue un indicateur global de profondeur du marché des options
+et peut être associée à une meilleure qualité des signaux de prix
+utilisés pour inférer la volatilité implicite.
+
+```{r viz_total_contracts, echo=TRUE}
+
+vars <- c("total_contracts")
+
+train_long <- DATA %>%
+  dplyr::select(dplyr::all_of(intersect(vars, names(DATA)))) %>%
+  tidyr::pivot_longer(cols = dplyr::everything(),
+                      names_to = "Variable",
+                      values_to = "Value") %>%
+  dplyr::mutate(Value_log = log1p(Value))
+
+
+ggplot(train_long, aes(x = Value_log)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p) — total_contrats",
+    x = "log(1 + valeur)", y = "Fréquence"
+  )
+```
+
+\###`strike_dispersion`
+
+La variable `strike_dispersion` mesure la dispersion des prix d’exercice
+disponibles dans la chaîne d’options pour un actif donné.
+
+Une dispersion plus élevée peut traduire une incertitude accrue quant
+aux scénarios de prix futurs ou une chaîne d’options plus complète, ce
+qui peut influencer la formation de la volatilité implicite observée.
+
+```{r viz_strike_dispersion, echo=TRUE}
+
+vars <- c("strike_dispersion")
+
+train_long <- DATA %>%
+  dplyr::select(dplyr::all_of(intersect(vars, names(DATA)))) %>%
+  tidyr::pivot_longer(cols = dplyr::everything(),
+                      names_to = "Variable",
+                      values_to = "Value") %>%
+  dplyr::mutate(Value_log = log1p(Value))
+
+ggplot(train_long, aes(x = Value_log)) +
+   geom_histogram(bins = 40, fill = "#2C7FB8", color = "white", alpha = 0.9) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(
+    title = "Histogrammes (échelle log1p) — strike_dispersion",
+    x = "log(1 + valeur)", y = "Fréquence"
+  )
+```
+
+## 2.5 Distribution des volatilités
+
+### `realized_vol_*`
+
+Les variables `realized_vol_*` mesurent la volatilité réalisée du prix
+de l’actif sous-jacent sur différentes fenêtres temporelles, allant du
+court au long terme.
+
+Elles capturent la dynamique historique de la variabilité des prix et
+constituent des prédicteurs naturels de la volatilité implicite, en
+raison de la persistance bien documentée de la volatilité dans le temps.
+
+```{r viz_realized_vol, echo=TRUE}
+
+rv_cols <- grep("^realized_vol_", names(DATA), value = TRUE)
+
+for (v in rv_cols) {
+  p <- ggplot(DATA, aes(x = log1p(.data[[v]]))) +
+    geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
+    labs(
+      title = paste0("Histogramme de ",v),
+      x     = paste0(v),
+      y     = "Frequence"
+    ) +
+    theme_minimal()
+  
+  print(p)
+}
+
+```
+
+```{r viz_realized_vol_2, echo=TRUE}
+
+vols <- var_numeriques %>%
+  dplyr::select(dplyr::starts_with("realized_vol")) %>%
+  dplyr::mutate(dplyr::across(dplyr::everything(), \(x) log(x + 0.0005))) %>%  
+  tidyr::pivot_longer(cols = dplyr::everything(),
+                      names_to = "variable",
+                      values_to = "valeur_log") %>%
+  dplyr::mutate(variable = stringr::str_remove(variable, "^realized_vol_")) %>%
+  ggplot2::ggplot(ggplot2::aes(x = valeur_log,
+                              y = forcats::fct_rev(variable),
+                              fill = variable)) +
+  ggridges::geom_density_ridges(scale = 2.2, alpha = 0.6, rel_min_height = 0.002) + 
+  ggplot2::scale_x_continuous(limits = c(-3, 9), expand = c(0, 0)) +                
+  ggridges::theme_ridges() +
+  ggplot2::labs(title = "Volatilités réalisées (échelle log)",
+                subtitle = "log(volatilité + 0.0005) - Échelle [-3, 9]",
+                x = "log(volatilité)", y = "") +
+  ggplot2::theme(legend.position = "none")
+
+print(vols)
+```
+
+### `market_vol_index`
+
+La variable `market_vol_index` est un indicateur synthétique du niveau
+global de volatilité sur le marché financier.
+
+Elle capte la composante systémique du risque, commune à l’ensemble des
+actifs, et permet d’intégrer l’état général du marché et de l’aversion
+au risque dans la modélisation de la volatilité implicite.
+
+```{r viz_market_vol_index, echo=TRUE}
+
+ggplot(DATA, aes(x = market_vol_index)) +
+  geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
+  labs(title = "Histogramme du market_vol_index",
+       x = "market_vol_index",
+       y = "Frequence") +
+  theme_minimal()
+```
+
+```{r serie temporelle, message=FALSE, warning=FALSE}
+
+DATA2 <- DATA %>%
+  mutate(obs_date = as.Date(obs_date))
+
+ggplot(DATA2, aes(x = obs_date, y = market_vol_index)) +
+  geom_line(color = "red") +
+  labs(title = "Evolution temporelle du market_vol_index",
+       x = "Date",
+       y = "market_vol_index") +
+  theme_minimal()
+
+```
+
+### Analyse de la variable cible
+
+La variable `implied_vol_ref` est la variable cible du projet. Elle
+représente la volatilité implicite extraite des prix d’options proches
+du prix à maturité et reflète l’anticipation du marché quant à la
+volatilité future de l’actif.
+
+L’analyse de sa distribution est centrale, dans la mesure où la
+performance finale des modèles sera évaluée sur l’échelle originale de
+cette variable, sans transformation lors du calcul du RMSE.
+
+```{r viz_implied_vol_ref, echo=TRUE}
+
+ggplot(DATA, aes(x = implied_vol_ref)) +
+  geom_histogram(bins = 50, fill = "#2C7FB8", color = "white") +
+  labs(title = "Histogramme de implied_vol_ref",
+       x = "implied_vol_ref",
+       y = "Frequence") +
+  theme_minimal()
+```
+
+Dans cette partie, nous analysons la distribution de la variable cible
+implied_vol_ref.
+
+L’histogramme montre que la volatilité implicite est asymétrique à
+droite. La majorité des observations se situe entre 30 et 50, avec une
+concentration autour de 35–45.
+
+On observe également une queue droite importante, avec des valeurs
+pouvant dépasser 100 lors des périodes de stress extrême.
+
+Cela indique que la variable cible n’est pas parfaitement symétrique et
+qu’elle présente des épisodes rares mais intenses de forte volatilité.
+
+```{r viz_implied_vol_ref_2, echo=TRUE}
+
+setDT(DATA)                 
+DATA[, obs_date := as.IDate(obs_date)]
+
+DATA_daily <- DATA[, .(mean_iv = mean(implied_vol_ref, na.rm = TRUE)),
+                     by = obs_date]
+
+
+
+ggplot(DATA_daily, aes(x = obs_date, y = mean_iv)) +
+  geom_line(color = "red") +
+  theme_minimal() +
+  labs(title = "Volatilité implicite moyenne par jour",
+       x = "Date",
+       y = "Volatilité implicite moyenne")
+
+
+```
+
+Afin d’analyser la dynamique dans le temps, nous avons calculé la
+volatilité implicite moyenne par jour sur l’ensemble des actifs.
+
+Le graphique met en évidence :
+
+Un pic très marqué début 2020, correspondant au choc lié au COVID-19.
+
+Une forte hausse brutale suivie d’une décrue progressive.
+
+Une stabilisation en 2021 à des niveaux plus modérés.
+
+Cela confirme que la volatilité implicite capte bien les périodes de
+stress de marché et présente des régimes différents selon le contexte
+économique.
+
+# III. Split temporel des données
+
+Dans cette partie, nous mettons en place un découpage temporel des
+données.
+
+Le découpage est réalisé de manière chronologique. L’échantillon
+d’apprentissage inclut l’ensemble de l’année 2019 ainsi qu’une grande
+partie de la période Covid, afin que le modèle soit exposé à des régimes
+de marché fortement volatils. L’échantillon de test interne comprend la
+fin de la période Covid ainsi que la phase de transition vers 2021.
+
+L’échantillon de test utilisé ici est exclusivement issu de ce découpage
+et sert uniquement à l’évaluation intermédiaire des modèles. Le jeu de
+données de test fourni séparément n’est pas utilisé à ce stade et sera
+réservé à l’évaluation finale.
+
+```{r split_temporel, message=FALSE, warning=FALSE}
+
+set.seed(2025)
+setDT(DATA)
+DATA[, obs_date := as.Date(obs_date)]
+
+
+# Split temporel 
+
+n <- nrow(DATA)
+n_train <- round(0.75 * n)
+
+train <- DATA[1:n_train, ]
+test <- DATA[(n_train + 1):n, ]
+
+
+res <- tibble::tibble(
+  Jeu = c("train", "test"),
+  Date_min = c(min(train$obs_date, na.rm = TRUE), min(test$obs_date, na.rm = TRUE)),
+  Date_max = c(max(train$obs_date, na.rm = TRUE), max(test$obs_date, na.rm = TRUE)),
+  N = c(nrow(train), nrow(test))
+)
+
+res %>%
+  kable(caption = "Vérifications du découpage temporel") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+
+
+```
+
+introduit cette partie
+
+# IV. Traitement des données abérrantes
+
+peu etre faire des boxplot pour montrer les outliers
+
+commentaire
+
+```{r valeur_abérrantes, echo=TRUE}
+
+setDT(train)
+train[, obs_date := as.IDate(obs_date)]
+setorder(train, asset_id, obs_date)
+
+rv_vars <- grep("^realized_vol_", names(train), value = TRUE)
+
+
+q <- 0.99
+
+# Seuils appris sur le train
+rv_upper <- sapply(rv_vars, function(v) as.numeric(quantile(train[[v]], probs = q)))
+names(rv_upper) <- rv_vars
+
+#COMPTAGE PAR VARIABLE (AVANT CAPPING) 
+cap_table <- rbindlist(lapply(rv_vars, function(v) {
+  seuil <- rv_upper[[v]]
+  n_cap <- train[get(v) > seuil, .N]
+  data.table(
+    variable = v,
+    seuil = seuil,
+    n_cap = n_cap,
+    pct_cap = 100 * n_cap / nrow(train)
+  )
+}))
+
+print(cap_table[order(-n_cap)])
+
+#  CAPPING 
+for (v in rv_vars) {
+  train[get(v) > rv_upper[v], (v) := rv_upper[v]]
+}
+
+
+```
+
+## Application de l'imputation au test
+
+```{r imputation test, message=FALSE, warning=FALSE}
+
+library(data.table)
+library(zoo)
+
+setDT(test)
+test[, obs_date := as.IDate(obs_date)]
+setorder(test, asset_id, obs_date)
+
+# Cap au quantile du train
+for (v in rv_vars) {
+  test[get(v) > rv_upper[v], (v) := rv_upper[v]]
+}
+
+```
+
+# V. Standardisation des données
+
+commentaire pourquoi ?
+
+```{r standardisation, echo=TRUE}
+library(data.table)
+library(dplyr)
+
+
+# Colonnes numériques à standardiser (sauf la cible)
+num_cols <- names(train)[sapply(train, is.numeric)]
+num_cols <- setdiff(num_cols, "implied_vol_ref")
+
+# Fit scaler sur train uniquement
+pp <- caret::preProcess(train[, ..num_cols], method = c("center", "scale"))
+
+# Apply sur train et test
+train[, (num_cols) := as.data.table(predict(pp, train[, ..num_cols]))]
+test[,  (num_cols) := as.data.table(predict(pp, test[, ..num_cols]))]
+
+```
+
+# VI. Modélisation
+
+COMMENTAIRE Tentons deja une modélisation naive
+
+## 6.1 Modèle de regression linéaire
+
+COMMENTAIRE
+
+```{r modèle de regression linéaire naif, message=FALSE, warning=FALSE}
+
+
+vars_num <- names(train)[sapply(train, is.numeric)]
+
+
+vars_num <- setdiff(vars_num, c("implied_vol_ref"))  
+
+form <- reformulate(vars_num, response = "implied_vol_ref")
+model_lm <- lm(form, data = as.data.frame(train))
+
+summary(model_lm)
+
+
+```
+
+### Résultat de la prédiction
+
+```{r pred_lm, message=FALSE, warning=FALSE}
+
+pred_train_lm <- predict(model_lm, newdata = train)
+pred_test_lm  <- predict(model_lm, newdata = test)
+
+
+rmse_train_lm <- sqrt(mean((train$implied_vol_ref - pred_train_lm)^2, na.rm = TRUE))
+rmse_test_lm  <- sqrt(mean((test$implied_vol_ref  - pred_test_lm)^2,  na.rm = TRUE))
+
+rmse_train_lm
+rmse_test_lm
+
+
+```
+
+### Etude des résidus
+
+```{r residus_lm, message=FALSE, warning=FALSE}
+library(broom)
+library(ggplot2)
+
+aug <- augment(model_lm)
+
+p_res <- ggplot(aug, aes(.fitted, .resid)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0) +
+  labs(x = "Fitted", y = "Residuals", title = "Residuals vs Fitted")
+
+p_qq <- ggplot(aug, aes(sample = .std.resid)) +
+  stat_qq(alpha = 0.3) +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q", x = "Theoretical Quantiles", y = "Standardized Residuals")
+
+p_res
+p_qq
+```
+
+## 6.2 Etude de corrélation
+
+### Matrice de corrélations
+
+Après avoir estimé un premier modèle linéaire (LM) de base, nous
+cherchons à mieux comprendre la relation entre les variables
+explicatives.
+
+En particulier, nous voulons vérifier s’il existe de fortes corrélations
+entre certaines variables, car cela peut poser un problème de
+multicolinéarité.
+
+Quand deux variables sont très corrélées, elles apportent presque la
+même information au modèle. Cela peut rendre les coefficients instables
+et difficiles à interpréter.
+
+Nous calculons donc la matrice de corrélation de Pearson sur toutes les
+variables numériques du jeu d’apprentissage. Le calcul est fait
+uniquement sur le jeu train, afin d’éviter toute fuite d’information
+vers le test.
+
+```{r matrice_correlation, message=FALSE, warning=FALSE}
+
+var_numeriques <- train %>%
+  dplyr::select(dplyr::where(is.numeric))
+
+cor_matrix <- cor(var_numeriques, use = "pairwise.complete.obs")
+
+```
+
+Heatmap de corrélations :
+
+```{r correlation_heatmap, fig.width=12, fig.height=10, message=FALSE, warning=FALSE}
+
+corrplot(cor_matrix, 
+         method = "color",
+         type = "upper",
+         order = "hclust",
+         tl.col = "black",
+         tl.cex = 0.7,
+         tl.srt = 45,
+         addCoef.col = "black",
+         number.cex = 0.5,
+         col = colorRampPalette(c("#67001F", "#B2182B", "#D6604D", "#F4A582",
+                                   "#FDDBC7", "#FFFFFF", "#D1E5F0", "#92C5DE",
+                                   "#4393C3", "#2166AC", "#053061"))(200),
+         title = "Matrice de corrélations",
+         mar = c(0,0,2,0))
+```
+
+La matrice montre plusieurs choses intéressantes.
+
+On observe d’abord un bloc très fortement corrélé entre les différentes
+variables de volatilité réalisée (realized_vol\_\*). Les corrélations
+sont souvent supérieures à 0.8, parfois proches de 0.9. Cela suggère que
+ces variables évoluent de manière très similaire.
+
+On remarque aussi une forte corrélation entre les variables liées aux
+volumes et aux open interest (put_volume, put_oi, call_volume, call_oi).
+Ces variables semblent porter une information proche.
+
+En revanche, certaines variables comme strike_dispersion ou
+market_vol_index présentent des corrélations plus modérées avec les
+autres variables, ce qui peut indiquer qu’elles apportent une
+information plus spécifique.
+
+Cette analyse descriptive permet de mieux comprendre la structure du jeu
+de données avant d’étudier plus précisément :
+
+la relation entre chaque variable et la variable cible implied_vol_ref,
+
+puis les éventuels problèmes de redondance entre variables explicatives.
+
+### Corrélations avec la variable cible
+
+Après avoir regardé les relations entre les variables explicatives, on
+s’intéresse maintenant au lien entre chaque variable et la variable
+cible `implied_vol_ref`.
+
+L’objectif ici est d’identifier quelles variables sont le plus fortement
+associées à la volatilité implicite. Cela permet d’avoir une première
+idée des variables potentiellement importantes pour la prédiction.
+
+```{r correlation_cible, message=FALSE, warning=FALSE}
+
+cor_with_target <- cor_matrix[, "implied_vol_ref"] %>%
+  as.data.frame() %>%
+  rename(Correlation = ".") %>%
+  tibble::rownames_to_column(var = "Variable") %>%
+  filter(Variable != "implied_vol_ref") %>%
+  arrange(desc(abs(Correlation)))
+
+```
+
+```{r correlation_cible_2}
+cor_with_target %>%
+  dplyr::mutate(
+    Correlation = round(Correlation, 4),
+    Abs_Correlation = round(abs(Correlation), 4),
+    Strength = dplyr::case_when(
+      abs(Correlation) >= 0.7 ~ "Très forte",
+      abs(Correlation) >= 0.5 ~ "Forte",
+      abs(Correlation) >= 0.3 ~ "Modérée",
+      abs(Correlation) >= 0.1 ~ "Faible",
+      TRUE ~ "Très faible"
+    )
+  ) %>%
+  dplyr::select(Variable, Correlation, Abs_Correlation, Strength) %>%
+  knitr::kable(
+    caption = "Corrélations avec implied_vol_ref",
+    align = "lrrl"
+  ) %>%
+  kableExtra::kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed")
+  ) %>%
+  kableExtra::row_spec(
+    which(abs(cor_with_target$Correlation) >= 0.5),
+    bold = TRUE, color = "white", background = "#2C7FB8"
+  ) %>%
+  kableExtra::scroll_box(width = "100%", height = "500px")
+
+```
+
+Visualisation graphique plus claire :
+
+```{r barplot_corr, fig.width=10, fig.height=8, message=FALSE, warning=FALSE}
+
+
+top_correlations <- cor_with_target %>%
+  head(15)
+
+ggplot(top_correlations, aes(x = reorder(Variable, abs(Correlation)), 
+                              y = Correlation,
+                              fill = Correlation > 0)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values = c("#B2182B", "#2166AC"),
+                    labels = c("Négative", "Positive"),
+                    name = "Direction") +
+  labs(title = "Corrélations avec implied_vol_ref",
+       x = "Variable",
+       y = "Coefficient de corrélation de Pearson") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text.y = element_text(size = 10))
+
+```
+
+Les résultats montrent que les variables les plus corrélées avec la
+cible `implied_vol_ref` sont les différentes mesures de volatilité
+réalisée (`realized_vol_*`).
+
+On observe des corrélations élevées :
+
+-   `realized_vol_mid3` : 0.748\
+-   `realized_vol_long4` : 0.745\
+-   `realized_vol_mid2` : 0.739\
+-   `realized_vol_mid1` : 0.725\
+-   `realized_vol_short` : 0.697
+
+Ces valeurs indiquent une relation positive forte entre la volatilité
+réalisée et la volatilité implicite. Cela est cohérent financièrement :
+la volatilité passée contient une information importante pour expliquer
+la volatilité implicite.
+
+La variable `strike_dispersion` présente une corrélation modérée (0.47).
+Elle semble donc apporter une information supplémentaire, mais moins
+dominante que les mesures de volatilité réalisée.
+
+`market_vol_index` affiche une corrélation plus faible (0.28), ce qui
+suggère un lien existant mais limité en termes de relation linéaire
+simple.
+
+Enfin, les variables liées aux volumes et aux open interest (`put_oi`,
+`put_volume`, `call_oi`, `call_volume`, `total_contracts`) présentent
+des corrélations très faibles, proches de zéro. Leur relation linéaire
+directe avec la cible semble donc limitée.
+
+La volatilité réalisée apparaît comme le principal facteur explicatif
+potentiel de `implied_vol_ref` dans une analyse linéaire simple. Les
+autres variables semblent jouer un rôle plus secondaire à ce stade.
+
+### Analyse de la multicolinéarité et justification de la sélection des variables
+
+Après avoir étudié le lien entre chaque variable et la cible
+`implied_vol_ref`, nous examinons maintenant les relations entre les
+variables explicatives elles-mêmes.
+
+L’objectif est d’identifier les groupes de variables très fortement
+corrélées entre elles. Lorsque deux variables présentent une corrélation
+élevée (en valeur absolue), elles apportent souvent une information
+similaire. Cela peut rendre les coefficients instables dans un modèle
+linéaire et compliquer l’interprétation.
+
+Nous recherchons donc les paires de variables dont la corrélation
+dépasse un certain seuil (ici \|r\| \> 0.7), afin de repérer les blocs
+de variables redondantes.
+
+Cette étape permet ensuite de justifier les choix de sélection ou de
+réduction de variables avant la modélisation finale.
+
+```{r multicollinearite, message=FALSE, warning=FALSE}
+
+
+high_cor_pairs <- which(abs(cor_matrix) > 0.7 & abs(cor_matrix) < 1, arr.ind = TRUE)
+
+high_cor_df <- data.frame(
+  Var1 = rownames(cor_matrix)[high_cor_pairs[, 1]],
+  Var2 = colnames(cor_matrix)[high_cor_pairs[, 2]],
+  Correlation = cor_matrix[high_cor_pairs]
+) %>%
+  filter(Var1 < Var2) %>%  # Éviter les doublons
+  arrange(desc(abs(Correlation)))
+
+if(nrow(high_cor_df) > 0) {
+  high_cor_df %>%
+    mutate(Correlation = round(Correlation, 4)) %>%
+    head(20) %>%
+    kable(caption = "Paires de variables hautement corrélées (|r| > 0.8)",
+          align = "llr") %>%
+    kable_styling(full_width = FALSE,
+                  bootstrap_options = c("striped", "hover", "condensed"))%>%
+  scroll_box(width = "100%", height = "450px")
+} else {
+  cat("Aucune paire de variables avec |r| > 0.8 détectée.\n")
+}
+```
+
+Les résultats confirment la présence de blocs de variables très
+fortement corrélées entre elles.
+
+On observe d’abord un groupe très dense autour des variables de
+volatilité réalisée (`realized_vol_*`).\
+Plusieurs corrélations dépassent 0.85, et certaines sont même
+supérieures à 0.90 :
+
+-   `realized_vol_long2` – `realized_vol_long3` : 0.927\
+-   `realized_vol_long2` – `realized_vol_mid3` : 0.920\
+-   `realized_vol_mid1` – `realized_vol_mid3` : 0.896\
+-   `realized_vol_long3` – `realized_vol_long4` : 0.894
+
+Ces résultats montrent que les différentes mesures de volatilité
+réalisée évoluent de manière très similaire. Elles contiennent donc en
+grande partie la même information.
+
+On observe également une forte corrélation entre certaines variables
+liées aux volumes et aux open interest :
+
+-   `put_oi` – `put_volume` : 0.849\
+-   `call_oi` – `put_oi` : 0.841
+
+Cela suggère que ces variables sont aussi très proches en termes
+d'information.
+
+Ces constats confirment qu’il existe des groupes de variables
+redondantes dans le jeu de données.\
+Il sera donc nécessaire de réduire ce bloc (notamment du côté des
+`realized_vol_*`) afin d’éviter d’introduire trop de variables fortement
+corrélées dans les modèles.
+
+### Calcul du VIF
+
+Après avoir identifié plusieurs groupes de variables fortement corrélées
+entre elles, nous cherchons maintenant à mesurer plus précisément
+l’impact de cette corrélation sur le modèle linéaire.
+
+Pour cela, nous calculons le **Variance Inflation Factor (VIF)** à
+partir du modèle linéaire de base (`model_lm`).
+
+Le VIF mesure à quel point la variance d’un coefficient est augmentée à
+cause de la corrélation avec les autres variables explicatives :
+
+-   VIF \< 5 : faible multicolinéarité\
+-   5 ≤ VIF \< 10 : multicolinéarité modérée\
+-   VIF ≥ 10 : multicolinéarité forte
+
+Cette mesure permet de confirmer de manière formelle ce que nous avons
+observé dans la matrice de corrélation, notamment pour les variables de
+volatilité réalisée.
+
+```{r Calcul du VIF, message=FALSE, warning=FALSE}
+
+# 1) Calcul VIF
+vif_values <- car::vif(model_lm)
+
+# 2) Mettre en data.frame + tri
+vif_df <- data.frame(
+  Variable = names(vif_values),
+  VIF = as.numeric(vif_values),
+  row.names = NULL
+) %>%
+  arrange(desc(VIF)) %>%
+  mutate(
+    VIF = round(VIF, 2),
+    Niveau = case_when(
+      VIF < 5  ~ "Faible (<5)",
+      VIF < 10 ~ "Modérée (5–10)",
+      TRUE     ~ "Forte (≥10)"
+    )
+  )
+
+# 3) Affichage joli (top 30)
+vif_df %>%
+  head(30) %>%
+  knitr::kable(
+    caption = "Facteurs d’inflation de variance (VIF) — modèle linéaire naïf",
+    align = "lcr"
+  ) %>%
+  kableExtra::kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed")
+  )%>%
+  scroll_box(width = "100%", height = "450px")
+```
+
+L’analyse des facteurs d’inflation de variance (VIF) met en évidence une
+forte multicolinéarité dans le modèle linéaire. Plusieurs variables de
+volatilité réalisée présentent des VIF très élevés (supérieurs à 20,
+voire 40), ce qui indique qu’elles sont presque linéairement dépendantes
+des autres variables explicatives.
+
+Cette situation est cohérente économiquement : les différentes mesures
+de volatilité réalisée (court, moyen et long terme) capturent un même
+phénomène latent, à savoir le niveau global de volatilité du
+sous-jacent. Leur inclusion simultanée dans le modèle crée donc une
+redondance informationnelle importante.
+
+La multicolinéarité n’introduit pas de biais dans les estimateurs OLS,
+mais elle augmente fortement la variance des coefficients et les rend
+instables. Les effets individuels deviennent alors difficiles à
+interpréter.
+
+Afin de limiter cette redondance structurelle tout en conservant
+l’essentiel de l’information économique, une simplification du bloc des
+volatilités réalisées est mise en œuvre. Plutôt que de conserver
+l’ensemble des fenêtres intermédiaires, nous retenons uniquement :
+
+-   `realized_vol_short`, représentant la dynamique récente de
+    volatilité ;
+-   `realized_vol_long4`, capturant la composante plus structurelle et
+    persistante.
+
+Ce choix permet de préserver la dimension court terme et long terme de
+la volatilité historique, tout en réduisant significativement la
+colinéarité interne du bloc. Cette approche intermédiaire vise à
+améliorer la stabilité du modèle linéaire avant d’envisager une
+régularisation plus systématique.
+
+## 6.3 Modèle de régularisation : LASSO
+
+Après cette première étape de simplification (réduction du bloc
+`realized_vol_*`), l’objectif est maintenant de passer à une sélection
+de variables plus automatique et plus robuste.
+
+Même après réduction, il peut rester : - des variables redondantes, -
+des variables peu informatives, - et des effets qui se chevauchent entre
+explicatives.
+
+Nous utilisons donc une méthode de régularisation : le **LASSO** (*Least
+Absolute Shrinkage and Selection Operator*).\
+Le LASSO ajoute une pénalité sur la somme des valeurs absolues des
+coefficients, ce qui a deux effets :
+
+-   il **réduit** les coefficients des variables peu utiles ;
+-   et il peut **mettre certains coefficients exactement à zéro**, ce
+    qui revient à faire une sélection de variables.
+
+Cette approche est particulièrement adaptée dans notre cas, où l’on
+dispose de plusieurs variables proches (volatilités, volumes, open
+interest, etc.) et où l’on souhaite un modèle plus stable et plus
+parcimonieux.
+
+Dans la suite, nous appliquons le LASSO sur l’ensemble des variables
+retenues après l’étape VIF, puis nous évaluons la performance sur le jeu
+de test.
+
+### Modélisation et résultat
+
+```{r LASSO, message=FALSE, warning=FALSE}
+
+# Variables retenues après VIF
+vars_selected <- c(
+  "strike_dispersion",
+  "call_volume",
+  "put_volume",
+  "call_oi",
+  "put_oi",
+  "maturity_count",
+  "total_contracts",
+  "realized_vol_short",
+  "realized_vol_long4",
+  "market_vol_index"
+)
+
+
+train_red <- train[, c("implied_vol_ref", vars_selected), with = FALSE]
+val_red   <- test[,  c("implied_vol_ref", vars_selected), with = FALSE]
+
+x_train <- model.matrix(implied_vol_ref ~ ., data = train_red)[, -1]
+y_train <- train_red$implied_vol_ref
+
+x_val <- model.matrix(implied_vol_ref ~ ., data = val_red)[, -1]
+y_val <- val_red$implied_vol_ref
+
+```
+
+```{r LASSO_pred, message=FALSE, warning=FALSE}
+
+set.seed(2025)
+
+cv_lasso <- cv.glmnet(
+  x_train,
+  y_train,
+  alpha = 1,          # lasso
+  nfolds = 5,
+  standardize = TRUE
+)
+
+# Predictions
+
+pred_lasso_train <- predict(
+  cv_lasso,
+  s = cv_lasso$lambda.1se,
+  newx = x_train
+)
+
+pred_lasso_val <- predict(
+  cv_lasso,
+  s = cv_lasso$lambda.1se,
+  newx = x_val
+)
+
+# Métriques
+rmse <- function(y, yhat) sqrt(mean((y - yhat)^2, na.rm = TRUE))
+r2   <- function(y, yhat) 1 - sum((y - yhat)^2, na.rm = TRUE) / sum((y - mean(y, na.rm = TRUE))^2, na.rm = TRUE)
+
+rmse_train <- rmse(y_train, pred_lasso_train)
+rmse_test  <- rmse(y_val,  pred_lasso_val)
+
+r2_train <- r2(y_train, pred_lasso_train)
+r2_test  <- r2(y_val,  pred_lasso_val)
+
+#  Tableau 
+perf_df <- data.frame(
+  Modele = "LASSO",
+  Lambda = round(cv_lasso$lambda.1se, 6),
+  RMSE_Train = round(rmse_train, 4),
+  RMSE_Test  = round(rmse_test,  4),
+  R2_Train   = round(r2_train,   4),
+  R2_Test    = round(r2_test,    4)
+)
+
+kable(perf_df, caption = "Performances du modèle LASSO", align = "lcrrrr") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+Après avoir réduit le bloc des volatilités réalisées à deux variables
+(`realized_vol_short` et `realized_vol_long4`) afin de limiter la
+multicolinéarité, nous appliquons le modèle LASSO.
+
+Le RMSE obtenu sur l’échantillon de test est :
+
+**RMSE = 11.75**
+
+Ce résultat montre que le modèle pénalisé par LASSO reste performant
+après la simplification du jeu de variables. La régularisation permet de
+stabiliser les coefficients et de sélectionner automatiquement les
+variables les plus pertinentes.
+
+Comparé au modèle linéaire naïf, cette approche présente plusieurs
+avantages :
+
+-   elle réduit l’impact des variables redondantes ;
+-   elle limite le risque de sur-ajustement ;
+-   elle améliore la robustesse du modèle.
+
+On observe néanmoins que le RMSE reste supérieur à celui obtenu avec le
+modèle à effets mixtes (≈ 8.85), ce qui suggère que la structure
+intra-asset joue un rôle important dans la capacité prédictive.
+
+Le LASSO constitue donc un compromis intéressant :\
+un modèle plus stable et plus parcimonieux que le LM naïf, tout en
+restant simple à interpréter.
+
+### Variables garder par Lasso
+
+le LASSO conserve uniquement les variables dont les coefficients sont
+différents de zéro.\
+L’objectif est donc maintenant d’identifier quelles variables sont
+réellement jugées utiles par le modèle.
+
+Les variables sélectionnées sont les suivantes :
+
+-   `strike_dispersion`
+-   `put_oi`
+-   `maturity_count`
+-   `realized_vol_short`
+-   `realized_vol_long4`
+-   `market_vol_index`
+
+Cela signifie que toutes les autres variables ont été pénalisées à zéro
+et donc exclues du modèle final.
+
+```{r LASSO_vars, message=FALSE, warning=FALSE}
+
+coef_lasso <- coef(cv_lasso, s = cv_lasso$lambda.1se)
+
+
+coef_mat <- as.matrix(coef_lasso)
+
+
+selected <- coef_mat[coef_mat[,1] != 0, , drop = FALSE]
+
+
+selected <- selected[rownames(selected) != "(Intercept)", , drop = FALSE]
+
+
+selected
+
+```
+
+### Interprétation des variables sélectionnées et perspectives d’amélioration
+
+Le LASSO retient principalement les variables de volatilité réalisée
+(`realized_vol_short`, `realized_vol_long4`), ainsi que quelques
+variables de structure comme `strike_dispersion`, `market_vol_index` et
+`maturity_count`.
+
+Cela confirme que la volatilité passée constitue le noyau explicatif
+central de `implied_vol_ref`.\
+Les autres variables jouent un rôle secondaire une fois cette
+information contrôlée.
+
+Cependant, cette sélection repose sur une spécification strictement
+linéaire.\
+Autrement dit, le modèle suppose que l’effet de chaque variable est
+proportionnel et constant, quelle que soit son amplitude.
+
+Or, en finance, l’impact de certaines variables — notamment la
+volatilité — peut varier selon le niveau du marché ou selon la maturité.
+Il est donc possible que certaines relations ne soient pas parfaitement
+capturées par une forme purement linéaire.
+
+Dans cette perspective, l’étape suivante consiste à enrichir la
+spécification du modèle par du **feature engineering** :\
+- création de termes quadratiques,\
+- construction d’interactions ciblées,\
+- ou variables synthétiques permettant de mieux représenter certaines
+dynamiques.
+
+L’objectif est d’améliorer la capacité prédictive du modèle tout en
+conservant une structure économiquement cohérente.
+
+## 6.4 Feature engineering
+
+Dans cette étape, nous enrichissons le modèle en ajoutant des **termes
+quadratiques** sur quelques variables clés.\
+L’objectif est de permettre au modèle de capturer des relations **non
+linéaires** (par exemple un effet de la volatilité qui augmente plus
+vite à certains niveaux).
+
+Nous construisons donc les carrés de `realized_vol_short`,
+`realized_vol_long4` et `market_vol_index`.
+
+```{r Feature_engineering, message=FALSE, warning=FALSE}
+
+make_features <- function(dt) {
+  dt <- data.table::copy(dt)
+  
+  # Convexité (termes quadratiques)
+  dt[, rv_short_sq := realized_vol_short^2]
+  dt[, rv_long_sq  := realized_vol_long4^2]
+  dt[, mkt_sq      := market_vol_index^2]
+
+  return(dt)
+}
+setDT(train); setDT(test)
+
+train <- make_features(train)
+test  <- make_features(test)
+
+```
+
+## 6.5 Ré-estimation du modèle LASSO avec les nouvelles variables
+
+Après l’ajout des termes quadratiques, nous ré-estimons le modèle LASSO
+afin d’évaluer l’apport de ces nouvelles variables.
+
+L’objectif est double :
+
+-   vérifier si les termes non linéaires sont retenus par la
+    pénalisation,
+-   mesurer leur impact sur la performance prédictive du modèle.
+
+Si ces nouvelles variables apportent une information pertinente, le
+LASSO devrait leur attribuer un coefficient non nul.\
+Dans le cas contraire, elles seront pénalisées à zéro.
+
+Cette étape permet donc de tester empiriquement si l’introduction de
+non-linéarités améliore la capacité explicative du modèle.
+
+### Modélisation et résultat
+
+```{r lasso_new, message=FALSE, warning=FALSE}
+
+vars_new <- c(
+  "rv_short_sq",
+  "rv_long_sq",
+   "mkt_sq"
+)
+
+vars_base <- c(
+  "strike_dispersion","put_oi","maturity_count",
+  "realized_vol_short","realized_vol_long4","market_vol_index"
+)
+
+vars_selected <- unique(c(vars_base, vars_new))
+
+```
+
+```{r lasso_new_data, message=FALSE, warning=FALSE}
+train_red <- train[, c("implied_vol_ref", vars_selected), with = FALSE]
+val_red   <- test[,  c("implied_vol_ref", vars_selected), with = FALSE]
+
+x_train <- model.matrix(implied_vol_ref ~ ., data = train_red)[, -1]
+y_train <- train_red$implied_vol_ref
+
+x_val <- model.matrix(implied_vol_ref ~ ., data = val_red)[, -1]
+y_val <- val_red$implied_vol_ref
+
+
+```
+
+```{r lasso_new_pred, message=FALSE, warning=FALSE}
+
+set.seed(2025)
+
+cv_lasso <- cv.glmnet(
+  x_train,
+  y_train,
+  alpha = 1,          # lasso
+  nfolds = 5,
+  standardize = TRUE
+)
+
+# Predictions
+
+pred_lasso_train <- predict(
+  cv_lasso,
+  s = cv_lasso$lambda.1se,
+  newx = x_train
+)
+
+pred_lasso_val <- predict(
+  cv_lasso,
+  s = cv_lasso$lambda.1se,
+  newx = x_val
+)
+
+# Métriques
+rmse <- function(y, yhat) sqrt(mean((y - yhat)^2, na.rm = TRUE))
+r2   <- function(y, yhat) 1 - sum((y - yhat)^2, na.rm = TRUE) / sum((y - mean(y, na.rm = TRUE))^2, na.rm = TRUE)
+
+rmse_train <- rmse(y_train, pred_lasso_train)
+rmse_test  <- rmse(y_val,  pred_lasso_val)
+
+r2_train <- r2(y_train, pred_lasso_train)
+r2_test  <- r2(y_val,  pred_lasso_val)
+
+#  Tableau 
+perf_df <- data.frame(
+  Modele = "LASSO",
+  Lambda = round(cv_lasso$lambda.1se, 6),
+  RMSE_Train = round(rmse_train, 4),
+  RMSE_Test  = round(rmse_test,  4),
+  R2_Train   = round(r2_train,   4),
+  R2_Test    = round(r2_test,    4)
+)
+
+kable(perf_df, caption = "Performances du modèle LASSO", align = "lcrrrr") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+Le RMSE obtenu sur l’échantillon de test est :
+
+**RMSE = 11.36**
+
+On observe une amélioration par rapport au modèle précédent (11.75), ce
+qui indique que les nouvelles variables apportent une information
+supplémentaire.
+
+```{r lasso_new_vars, message=FALSE, warning=FALSE}
+
+coef_lasso <- coef(cv_lasso, s = cv_lasso$lambda.1se)
+
+
+coef_mat <- as.matrix(coef_lasso)
+
+
+selected <- coef_mat[coef_mat[,1] != 0, , drop = FALSE]
+
+
+selected <- selected[rownames(selected) != "(Intercept)", , drop = FALSE]
+
+selected
+
+```
+
+Les variables retenues sont maintenant :
+
+-   `strike_dispersion`
+-   `put_oi`
+-   `maturity_count`
+-   `realized_vol_short`
+-   `realized_vol_long4`
+-   `market_vol_index`
+-   `rv_short_sq`
+-   `mkt_sq`
+
+On remarque que les deux variables de volatilité restent centrales.\
+Mais le modèle conserve aussi `rv_short_sq` et `mkt_sq`.
+
+Cela signifie que la relation entre la volatilité courte, le marché et
+la variable cible n’est pas parfaitement linéaire.\
+Ajouter les termes au carré permet donc de mieux représenter cette
+relation.
+
+Le modèle reste simple, mais il devient légèrement plus flexible.\
+Cette étape montre que le feature engineering apporte une amélioration
+mesurable.
+
+### Graphe des résidus vs fitted
+
+```{r lasso_new_residus, message=FALSE, warning=FALSE}
+library(ggplot2)
+
+# Sécuriser le type
+pred_test_num <- as.numeric(pred_lasso_val)
+y_test_num    <- as.numeric(y_val)
+
+res_test <- y_test_num - pred_test_num
+
+df_res <- data.frame(
+  pred  = pred_test_num,
+  resid = res_test
+)
+
+
+ggplot(df_res, aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.25) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "LASSO — Résidus vs valeurs prédites (Test)",
+    x = "Valeurs prédites (ŷ)",
+    y = "Résidus (y - ŷ)"
+  )
+```
+
+Le graphique des résidus en fonction des valeurs prédites montre que la
+dispersion des erreurs augmente lorsque les prédictions augmentent.
+
+On observe une forme en éventail : les résidus sont relativement
+concentrés pour les petites valeurs prédites, mais deviennent plus
+dispersés pour les valeurs élevées.
+
+Cela suggère que la variance des erreurs n’est pas constante sur
+l’ensemble du domaine.
+
+On remarque également que pour les valeurs prédites les plus élevées,
+les résidus sont fréquemment négatifs.\
+Le modèle semble donc légèrement surestimer certaines grandes valeurs de
+`implied_vol_ref`.
+
+Ces éléments indiquent que, malgré l’amélioration apportée par la
+régularisation et les termes quadratiques, la relation entre les
+variables explicatives et la cible n’est peut-être pas totalement
+capturée par une structure globale unique.
+
+## 6.6 Limites des modèles précédents
+
+Les modèles linéaires et LASSO testés jusqu’ici supposent que toutes les
+observations suivent la même relation entre les variables explicatives
+et `implied_vol_ref`.
+
+Autrement dit, ils estiment un seul ensemble de coefficients valable
+pour tous les assets.
+
+Or, dans notre base de données, les observations sont regroupées par
+`asset_id`.\
+Il est possible que la relation entre la volatilité réalisée et la
+volatilité implicite varie légèrement d’un actif à l’autre.
+
+Les modèles précédents ne prennent pas en compte cette hétérogénéité.
+
+Cela peut limiter leur capacité prédictive.
+
+# 6.7 Modèle à effets mixtes
+
+On a remarqué que nos données présentent une structure hiérarchique : la
+volatilité de certains asset est systématiquement plus élevée que
+d'autres. Par-exemple, la volatilité implicite des actions de Tesla est
+constamment plus importante que celles de Microsoft.
+
+Autrement dit, il existe des niveaux de bases pour la volatilité de
+chaque asset et les observations des assets d'une même entreprise sont
+corrélées entre elles. Ce regroupement en classes est ignoré par la
+régression classique.
+
+Un moyen de prendre cela en considération est d'utiliser un modèle à
+effets mixtes, qui combine :
+
+1.  **Effets fixes** : Relations universelles valables pour tous les
+    assets
+2.  **Effets aléatoires** : Variations spécifiques à chaque asset
+
+```{r}
+library(lme4)        # Modèles à effets mixtes
+library(lmerTest)    # P-values pour effets fixes
+library(performance) # Diagnostics et comparaison
+library(lattice)     # Visualisations des effets aléatoires
+library(sjPlot)      # Tableaux et graphiques
+library(merTools)    # Outils pour prédictions et intervalles
+library(broom.mixed) # Tidy des résultats
+library(ggeffects)   # Effets marginaux
+library(tidyverse)   # Manipulation de données
+library(Metrics)     # Métriques de performance
+```
+
+```{r}
+obs_per_asset <- DATA %>%
+  count(asset_id) %>%
+  summarise(
+    min = min(n),
+    q25 = quantile(n, 0.25),
+    median = median(n),
+    mean = mean(n),
+    q75 = quantile(n, 0.75),
+    max = max(n)
+  )
+```
+
+Pour ne pas avoir un nombre de classes excessif, on peut retirer les
+assets avec moins de 10 observations, qui ne seront de toute façon pas
+importantes dans la prédiction de la volatilité. La différence dans le
+nombre d'observations des assets est également un indicateur qui nous
+pousse à utiliser ce modèle.
+
+```{r}
+cat("\nObservations par asset:\n")
+print(obs_per_asset)
+
+# Filtrer les assets avec au moins 10 observations 
+min_obs <- 10
+train_filtered <- train %>%
+  group_by(asset_id) %>%
+  filter(n() >= min_obs) %>%
+  ungroup()
+
+cat("\nAprès filtrage (min", min_obs, "obs par asset):\n")
+cat("  Observations restantes:", nrow(train_filtered), "\n")
+cat("  Assets restants:", length(unique(train_filtered$asset_id)), "\n\n")
+```
+
+```{r}
+test_filtered <- test %>%
+  group_by(asset_id) %>%
+  filter(n() >= min_obs) %>%
+  ungroup()
+```
+
+L'échantillon comprend **1 432 059 observations** regroupées en **3 877
+actifs** distincts. En moyenne, cela représente environ 369 observations
+par actif, bien que cette moyenne cache une forte variabilité : certains
+actifs très liquides et activement négociés contribuent des milliers
+d'observations, tandis que d'autres actifs moins liquides n'en
+fournissent que quelques dizaines.
+
+### Modèle avec intercept aléatoire
+
+Le modèle à effets mixtes le plus simple consiste à ne considérer que
+l'intercept comme étant aléatoire. Autrement dit, chaque asset a son
+**propre niveau de base** (intercept), mais la **relation** entre
+variables explicatives et cible est la **même pour tous.** Quand les
+assets diffèrent seulement par leur niveau moyen de volatilité, il
+permets une bonne prédiction.
+
+```{r}
+#train_filtered
+```
+
+```{r}
+
+
+# Variables sélectionnées
+vars_fixed <- c("realized_vol_short", "realized_vol_long4", "strike_dispersion",
+                "market_vol_index", "put_oi","rv_short_sq", "rv_long_sq", "mkt_sq")
+
+# Vérifier que les variables existent
+vars_fixed <- intersect(vars_fixed, names(train_filtered))
+```
+
+Les variables fixes sont globales et reflètent une réalité économique
+universelle. L'indice de volatilité du marché synthétise le climat
+général d'incertitude et de risque sur les marchés financiers. Les
+volatilités implicites individuelles sont influencées par ce facteur
+systémique commun, reflétant les périodes d'aversion au risque accrue ou
+de complaisance généralisée. De même, les indicateurs de liquidité du
+marché (dispersion des strikes, ratio put-call, ...) reflète le
+positionnement des paticipants et les mouvements baissiers ou haussiers
+généraux.
+
+```{r}
+
+
+# Formule
+formula_ri <- as.formula(paste("implied_vol_ref ~", 
+                               paste(vars_fixed, collapse = " + "),
+                               "+ (1 | asset_id)"))
+
+cat("Formule du modèle:\n")
+print(formula_ri)
+cat("\n")
+```
+
+```{r entrainement}
+model_ri <- lmer(
+  formula_ri,
+  data = train_filtered,
+  REML = FALSE,  # Maximum Likelihood pour comparaison de modèles
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+```
+
+Chaque actif $i$ possède son propre niveau de base de volatilité
+implicite, modélisé par l'intercept aléatoire $\eta_{i0}$. Cette
+composante capture toutes les caractéristiques idiosyncratiques de
+l'actif qui influencent sa volatilité implicite au-delà des variables
+explicatives observées : secteur d'activité, taille de capitalisation,
+profil de risque spécifique, historique de volatilité à très long terme,
+ou encore perception qualitative du marché. L'estimation de ces
+intercepts révèle une hétérogénéité entre les actifs.
+
+```{r}
+summary(model_ri)
+```
+
+Les résidus standardisés ont bien une médiane très proche de 0 donc pas
+de biais systématique du modèle, mais on a des valeurs extrêmes
+importantes pour les résidus qui relèvent l'existence d'observations mal
+prédites.
+
+L'**intercept aléatoire** révèle une hétérogénéité substantielle entre
+actifs. En moyenne, les niveaux de base de volatilité implicite
+diffèrent d'environ 15 points d'un actif à l'autre. Les actifs avec des
+intercepts fortement positifs (au-delà de +30, soit deux écarts-types)
+représentent environ 2,5% de l'échantillon et constituent le segment à
+volatilité structurellement très élevée qu'il vaudrait mieux éviter dans
+une gestion de portefeuille raisonnable.
+
+La volatilité réalisée à court terme reste le prédicteur le plus
+important du modèle, suivie par la volatilité à long terme.
+
+Les variables quadratiques ajoutées capturent les effets non linéaires
+de la volatilité. Les 3 ont des coefficients négatifs et significatifs,
+reflètant la concavité de la volatilité : l'impact de son augmentation
+diminue à mesure qu'elle augmente.
+
+```{r}
+variance_components <- as.data.frame(VarCorr(model_ri))
+cat("\nComposantes de variance:\n")
+print(variance_components)
+```
+
+```{r}
+# ICC (Intraclass Correlation Coefficient)
+icc_value <- performance::icc(model_ri)
+cat("\nICC (Intraclass Correlation):", round(icc_value$ICC_adjusted, 4), "\n")
+cat("Interprétation: ", round(icc_value$ICC_adjusted * 100, 1), 
+    "% de la variance est due aux différences entre assets\n\n")
+```
+
+La corrélation intra-classe, ou ICC en abrégé, est une mesure de la
+concordance entre des observations dans les mêmes classes Une
+corrélation intra-classe de 0 signifie qu'il n'y a aucune concordance et
+une corrélation intra-classe de 1 signifie qu'il y a une concordance
+totale. Ici, on voit que les assets ayant le même id ont une corrélation
+de 0.68, ce qui signifie que 68% de la variance est due non pas à un
+effet universel mais aux simples différences de base entre les assets.
+Il est donc nécessaire de séparer les effets aléatoires et les effets
+fixes.
+
+```{r}
+# Prédictions
+pred_ri_train <- predict(model_ri, newdata = train_filtered)
+pred_ri_test <- predict(model_ri, newdata = test_filtered, allow.new.levels = TRUE)
+```
+
+```{r}
+calc_rmse <- function(actual, predicted) {
+  sqrt(mean((actual - predicted)^2, na.rm = TRUE))
+}
+
+calc_r2 <- function(actual, predicted) {
+  cor(actual, predicted, use = "complete.obs")^2
+}
+
+calc_mae <- function(actual, predicted) {
+  mean(abs(actual - predicted), na.rm = TRUE)
+}
+```
+
+```{r}
+rmse_ri_train <- calc_rmse(train_filtered$implied_vol_ref, pred_ri_train)
+rmse_ri_test <- calc_rmse(test_filtered$implied_vol_ref, pred_ri_test)
+r2_ri_train <- calc_r2(train_filtered$implied_vol_ref, pred_ri_train)
+r2_ri_test <- calc_r2(test_filtered$implied_vol_ref, pred_ri_test)
+```
+
+```{r}
+#  Tableau 
+perf_df <- data.frame(
+  Modele = "MODÈLE RI",
+  RMSE_Train = round(rmse_ri_train, 4),
+  RMSE_Test  = round(rmse_ri_test,  4),
+  R2_Train   = round(r2_ri_train,   4),
+  R2_Test    = round(r2_ri_test,    4)
+)
+
+kable(perf_df, caption = "Performances du modèle RI", align = "lcrrrr") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+Calcul du RMSE sur le dataset complet :
+
+```{r}
+train_final <- bind_rows(train_filtered, test_filtered)
+model_ri <- lmer(
+  formula_ri,
+  data = train_final,
+  REML = FALSE,  # Maximum Likelihood pour comparaison de modèles
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+pred_ri_train_final <- predict(model_ri, newdata = train_final)
+rmse_ri_train_final <- calc_rmse(train_final$implied_vol_ref, pred_ri_train_final)
+r2_ri_train_final <- calc_r2(train_final$implied_vol_ref, pred_ri_train_final)
+
+```
+
+```{r}
+perf_df2 <- data.frame(
+  Modele = "MODÈLE RI",
+  RMSE = round(rmse_ri_train_final, 4),
+  R2   = round(r2_ri_train_final,   4)
+)
+
+kable(perf_df2, caption = "Performances du modèle RI", align = "lcrrrr") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+On a déjà réussi à diminuer le RMSE à 9.8 avec un R2 correct \> 0.8 mais
+on va l'améliorer en rajoutant également des pentes aléatoires.
+
+### Modèle avec intercept et pentes aléatoires
+
+En rajoutant des pentes aléatoires, on a cette fois que chaque asset a
+son propre niveau de base et que sa sensibilité aux variables
+explicatives varie. L'interprétation de ce modèle est que certaines
+entreprises réagissent plus fortement aux changements macroéconomiques
+que d'autres.
+
+```{r}
+
+
+# Formule avec pente aléatoire pour realized_vol_short
+formula_ris <- as.formula(paste("implied_vol_ref ~", 
+                                paste(vars_fixed, collapse = " + "),
+                                "+ (1 + realized_vol_short | asset_id)"))
+
+cat("Formule du modèle:\n")
+print(formula_ris)
+cat("\n")
+
+# Entraînement
+
+model_ris <- lmer(
+  formula_ris,
+  data = train_filtered,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 200000))
+)
+
+
+
+
+
+```
+
+Formellement, pour chaque actif $i$ ($i = 1, \dots, N$) et chaque
+observation temporelle $j$ ($j = 1, \dots, n_i$), le modèle s'écrit
+$y_{ij} = \beta_0 + \beta_1 x_{ij}^{(1)} + \cdots + \beta_p x_{ij}^{(p)} + \eta_{i0} + \eta_{i1} x_{ij}^{(1)} + \xi_{ij}$
+
+où $y_{ij}$ représente la volatilité implicite de référence, les
+$\beta_k$ sont les coefficients d'effets fixes communs à tous les
+actifs, les $\eta_{ik}$ sont les effets aléatoires spécifiques à l'actif
+$i$, et $\xi_{ij}$ représente l'erreur résiduelle. Les effets aléatoires
+$\eta_i$ doivent suivre une distribution normale multivariée
+$\mathcal{N}(\boldsymbol{0}, \Omega)$, tandis que les erreurs $\xi_{ij}$
+sont indépendantes et normalement distribuées :
+$\xi_i \sim \mathcal{N}(\boldsymbol{0}, \sigma^2 \textbf{I})$.
+
+```{r}
+
+summary(model_ris)
+```
+
+Tout d'abord, la distribution des résidus standardisés reste correcte :
+la médiane reste très proche de 0, donc aucun biais systématique ni
+surestimation ou sous-estimation globale. Les quartiles restent
+symmétriques mais plus resserrés, donc la dispersion des erreurs est
+réduite.
+
+Cependant, il reste des valeurs extrêmes pour les résidus, même si ces
+outliers restent très rares (une dizaine sur plus d'un million
+d'observations), ce qui n'impacte donc pas la qualité globale du modèle.
+
+Les mêmes remarques que précédemment peuvent être faites sur l'intercept
+aléatoire.
+
+La pente aléatoire pour realized_vol_short a un écart-type de **6,13**,
+et 68% des actifs ont des pentes totales (effet fixe + effet aléatoire)
+comprises entre 0,51 et 12,77. Autrement dit, pour certains actifs, une
+augmentation d'un point de volatilité réalisée courte s'accompagne d'une
+hausse de seulement 0,5 point de volatilité implicite, tandis que pour
+d'autres actifs, le même changement produit une augmentation de près de
+13 points ! Cette dispersion massive démontre que la relation entre
+volatilité réalisée et volatilité implicite n'est absolument pas
+uniforme à travers le marché.
+
+Les 16% d'actifs qui sont au-dessus du 12.77 sont extrêmements réactifs
+aux chocs de volatilité du marché, tandis que ceux en-dessous de 0
+réagissent inversement au marché (un marché sous tension et une hausse
+de la volatilité réalisée donnera lieu à une diminution de la volatilité
+implicite) : il y a donc un phénomène de retour à la moyenne pour ces
+derniers.
+
+```{r}
+# Variance components
+variance_components_ris <- as.data.frame(VarCorr(model_ris))
+cat("\nComposantes de variance:\n")
+print(variance_components_ris)
+
+# Prédictions
+pred_ris_train <- predict(model_ris, newdata = train_filtered)
+pred_ris_test <- predict(model_ris, newdata = test_filtered, allow.new.levels = TRUE)
+```
+
+```{r}
+
+
+
+# Métriques
+rmse_ris_train <- calc_rmse(train_filtered$implied_vol_ref, pred_ris_train)
+rmse_ris_test <- calc_rmse(test_filtered$implied_vol_ref, pred_ris_test)
+r2_ris_train <- cor(train_filtered$implied_vol_ref, pred_ris_train)^2
+r2_ris_test <- cor(test_filtered$implied_vol_ref, pred_ris_test)^2
+
+#  Tableau 
+perf_df <- data.frame(
+  Modele = "MODÈLE RIS",
+  RMSE_Train = round(rmse_ris_train, 4),
+  RMSE_Test  = round(rmse_ris_test,  4),
+  R2_Train   = round(r2_ris_train,   4),
+  R2_Test    = round(r2_ris_test,    4)
+)
+
+kable(perf_df, caption = "Performances du modèle RIS", align = "lcrrrr") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+On va mesurer le RMSE sur le train total avec notre modèle qui sera
+notre modèle final :
+
+```{r}
+
+mod_Final <- lmer(
+  formula_ris,
+  data = train_final,
+  REML = FALSE,  # Maximum Likelihood pour comparaison de modèles
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+```
+
+```{r}
+pred_ris_train_final <- predict(mod_Final, newdata = train_final)
+rmse_ris_train_final <- calc_rmse(train_final$implied_vol_ref, pred_ris_train_final)
+r2_ris_train_final <- calc_r2(train_final$implied_vol_ref, pred_ris_train_final)
+```
+
+```{r}
+perf_df3 <- data.frame(
+  Modele = "MODÈLE Final",
+  RMSE = round(rmse_ris_train_final, 4),
+  R2   = round(r2_ris_train_final,   4)
+)
+
+kable(perf_df3, caption = "Performances du modèle final", align = "lcrrrr") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+On obtient un RMSE final de 9.2 avec un R2 toujours convenable \> 0.8
+
+### Analyse des effets aléatoires
+
+```{r}
+
+
+# Extraire les effets aléatoires du meilleur modèle (RIS)
+random_effects <- ranef(model_ris)$asset_id
+random_effects$asset_id <- rownames(random_effects)
+colnames(random_effects) <- c("Intercept", "Slope_realized_vol_short", "asset_id")
+
+# Statistiques descriptives
+cat("=== Statistiques des Effets Aléatoires ===\n")
+cat("\nIntercepts aléatoires:\n")
+cat("  Min:", round(min(random_effects$Intercept), 3), "\n")
+cat("  Q1:", round(quantile(random_effects$Intercept, 0.25), 3), "\n")
+cat("  Médiane:", round(median(random_effects$Intercept), 3), "\n")
+cat("  Q3:", round(quantile(random_effects$Intercept, 0.75), 3), "\n")
+cat("  Max:", round(max(random_effects$Intercept), 3), "\n\n")
+
+cat("Slopes aléatoires (realized_vol_short):\n")
+cat("  Min:", round(min(random_effects$Slope_realized_vol_short), 3), "\n")
+cat("  Médiane:", round(median(random_effects$Slope_realized_vol_short), 3), "\n")
+cat("  Max:", round(max(random_effects$Slope_realized_vol_short), 3), "\n\n")
+
+# Top 10 assets avec intercepts les plus élevés
+top10_high <- random_effects %>%
+  arrange(desc(Intercept)) %>%
+  head(10)
+
+cat("=== Top 10 Assets - Volatilité de Base la Plus Élevée ===\n")
+print(top10_high)
+cat("\n")
+
+# Top 10 assets avec intercepts les plus faibles
+top10_low <- random_effects %>%
+  arrange(Intercept) %>%
+  head(10)
+
+cat("=== Top 10 Assets - Volatilité de Base la Plus Faible ===\n")
+print(top10_low)
+cat("\n")
+```
+
+On peut ainsi facilement obtenir une liste des actifs qui sont de bases
+très volatiles et d'autres qui sont de base très stables.
+
+```{r}
+
+library(ggplot2)
+
+# 1. Distribution des effets aléatoires (Intercepts)
+p1 <- ggplot(random_effects, aes(x = Intercept)) +
+  geom_histogram(bins = 30, fill = "#2C7FB8", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "Distribution des Intercepts Aléatoires",
+       x = "Intercept Aléatoire",
+       y = "Fréquence") +
+  theme_minimal()
+
+
+# 2. Distribution des effets aléatoires (Slopes)
+p2 <- ggplot(random_effects, aes(x = Slope_realized_vol_short)) +
+  geom_histogram(bins = 30, fill = "#4ECDC4", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "Distribution des Slopes Aléatoires (realized_vol_short)",
+       x = "Slope Aléatoire",
+       y = "Fréquence") +
+  theme_minimal()
+
+
+# 3. Relation Intercept vs Slope
+p3 <- ggplot(random_effects, aes(x = Intercept, y = Slope_realized_vol_short)) +
+  geom_point(alpha = 0.5, color = "#2C7FB8", size = 2) +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "Corrélation entre Intercept et Slope Aléatoires",
+       x = "Random Intercept",
+       y = "Random Slope (realized_vol_short)") +
+  theme_minimal()
+
+
+# 4. Top 20 assets par intercept
+top20_plot <- random_effects %>%
+  arrange(desc(Intercept)) %>%
+  head(20)
+
+p4 <- ggplot(top20_plot, aes(x = reorder(asset_id, Intercept), y = Intercept)) +
+  geom_bar(stat = "identity", fill = "#2C7FB8", alpha = 0.8) +
+  coord_flip() +
+  labs(title = "Top 20 Assets - Effets Aléatoires (Intercept)",
+       subtitle = "Déviation par rapport à la volatilité implicite moyenne",
+       x = "Asset",
+       y = "Effet Aléatoire (Intercept)") +
+  theme_minimal()
+
+
+
+# 5. Prédictions vs Réel (Test set)
+pred_vs_actual <- data.frame(
+  Actual = test_filtered$implied_vol_ref,
+  Predicted = pred_ris_test
+)
+
+p5 <- ggplot(pred_vs_actual, aes(x = Actual, y = Predicted)) +
+  geom_point(alpha = 0.3, color = "#2C7FB8") +
+  geom_abline(intercept = 0, slope = 1, color = "red", size = 1, linetype = "dashed") +
+  geom_smooth(method = "lm", se = TRUE, color = "blue", fill = "lightblue", alpha = 0.2) +
+  labs(title = "Prédictions vs Valeurs Réelles (Test Set)",
+       subtitle = paste0("R² = ", round(r2_ris_test, 4), " | RMSE = ", round(rmse_ris_test, 4)),
+       x = "Volatilité Implicite Réelle",
+       y = "Volatilité Implicite Prédite") +
+  theme_minimal() +
+  coord_fixed()
+
+```
+
+```{r}
+p5
+```
+
+------------------------------------------------------------------------
+
+## 
+
+Le R² de 84.27% indique que le modèle parvient à expliquer plus de
+quatre cinquièmes de la variance totale de la volatilité implicite. Dans
+le contexte des marchés financiers, où la volatilité est notoirement
+difficile à prévoir en raison de sa nature stochastique et de sa
+dépendance à de nombreux facteurs non observables, ce résultat constitue
+une bone performancee. Le reste de la variance non expliquée reflète la
+part d'incertitude inhérente aux marchés financiers, incluant l'impact
+d'événements imprévisibles, de chocs de liquidité et de facteurs
+comportementaux difficiles à modéliser.
+
+On observe cependant une tendance du modèle à sous-estimer les
+volatilités extrêmes et sur-estimer les volatilités trop faibles.
+
+```{r}
+p4
+```
+
+L'actif identifié par le ticker SMMT présente un effet aléatoire
+d'intercept d'environ 95 points, et est donc structurellement perçu
+comme risqué par le marché. On observe ainsi un continuum d'actifs à
+risque élevé.
+
+L'identification de ces actifs à volatilité structurellement élevée a
+des implications pratiques majeures pour la gestion de portefeuille et
+le pricing d'options.
+
+```{r}
+p3
+```
+
+Cette relation négative entre intercept et pente reflète un principe
+économique plus général : la loi des rendements marginaux décroissants
+de l'information. Pour un actif déjà perçu comme très volatile, une
+information additionnelle confirmant cette volatilité a un impact
+marginal limité. Pour un actif perçu comme stable, la même information a
+un impact majeur car elle remet en question les croyances préalables du
+marché.
+
+La présence de cette corrélation négative valide également l'approche
+méthodologique du modèle à effets mixtes, qui permet aux pentes de
+varier d'un actif à l'autre. Un modèle à effets fixes, imposant une
+pente identique pour tous les actifs, ne pourrait pas capturer cette
+hétérogénéité fondamentale.
+
+```{r}
+p2
+```
+
+L"hypothèse de normalité des effets aléatoires est raisonnablement
+satisfaite pour les pentes.
+
+```{r}
+p1
+```
+
+Cette distribution a une asymétrie prononcée vers la droite,
+contrairement à la distribution des pentes qui présentait une forme
+approximativement normale. On a donc sur le marché une population non
+négligeable d'actifs intrinsèquement risqués.
+
+```{r}
+
+
+# Calculer les intervalles de confiance pour un échantillon
+
+set.seed(123)
+sample_test <- test %>%
+  sample_n(min(1000, nrow(test)))  # Maximum 1000 observations
+
+# Prédictions avec intervalles 
+
+pred_intervals <- predictInterval(model_ris, 
+                                   newdata = sample_test,
+                                   level = 0.95,
+                                   n.sims = 100,
+                                   stat = "median",
+                                   include.resid.var = TRUE)
+
+# Combiner avec les données
+pred_with_ci <- cbind(sample_test, pred_intervals)
+
+# Visualiser
+p6 <- ggplot(pred_with_ci, aes(x = implied_vol_ref, y = fit)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "#2C7FB8", alpha = 0.2) +
+  geom_point(alpha = 0.5, color = "#2C7FB8") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(title = "Prédictions avec Intervalles de Confiance 95%",
+       x = "Volatilité Implicite Réelle",
+       y = "Volatilité Implicite Prédite") +
+  theme_minimal()
+
+
+
+```
+
+```{r}
+p6
+```
+
+On observe une expansion progressive de l'incertitude avec le niveau de
+volatilité , à cause du phénomène d'hétéroscédasticité des actifs très
+volatiles.
