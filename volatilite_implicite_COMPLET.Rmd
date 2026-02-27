@@ -161,6 +161,7 @@ plot(h$mids, log10(h$counts + 1), type = "h",
 ```
 
 On remarque que les assets n'ont pas le même nombre d'observation. 
+Il est possible que de nouveaux actifs apparaissent dans notre ensemble de test qui ne figurent pas dans l'ensemble d'apprentissage.
 
 # 1.6 Plage temporelle des données
 
