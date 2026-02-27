@@ -2146,70 +2146,6 @@ kable(perf_df, caption = "Performances du modèle RIS", align = "lcrrrr") %>%
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
-# Tableau comparatif des RMSE 
-
-```{r comparaison_train_test, message=FALSE, warning=FALSE}
-
-
-perf_train_test <- data.frame(
-  Modele = c(
-    "OLS",
-    "LASSO_old",
-    "LASSO_new",
-    "Mixed_RI",
-    "Mixed_RIS"
-  ),
-  RMSE_Train = c(
-    rmse_train_lm,
-    rmse_train,          # LASSO old 
-    rmse_train_new,      # LASSO new
-    rmse_ri_train,
-    rmse_ris_train
-  ),
-  RMSE_Test = c(
-    rmse_test_lm,
-    rmse_test,           # LASSO old 
-    rmse_test_new,       # LASSO new
-    rmse_ri_test,
-    rmse_ris_test
-  )
-)
-# generalisation gap
-perf_train_test <- perf_train_test %>%
-  mutate(Gap = RMSE_Test - RMSE_Train) %>%
-  arrange(RMSE_Test)
-
-kable(
-  perf_train_test,
-  caption = "Comparaison des performances Train / Test (évaluation hors-échantillon)",
-  align = "lrrr"
-) %>%
-  kable_styling(
-    full_width = FALSE,
-    bootstrap_options = c("striped", "hover", "condensed")
-  )
-
-```
-
-Parmi l’ensemble des modèles testés, le modèle à effets mixtes avec intercept et pente aléatoires (Mixed_RIS) obtient le RMSE le plus faible sur le jeu de test (8.85).
-
-Il présente également :
-
-* une amélioration significative par rapport aux modèles linéaires classiques,
-* une meilleure capacité de généralisation,
-* une cohérence économique forte.
-
-En effet, la structure hiérarchique des données (plusieurs observations par asset) justifie l’introduction d’effets aléatoires.
-La possibilité de faire varier la sensibilité au marché selon l’actif permet de mieux capturer l’hétérogénéité structurelle.
-
-On retient donc premièrement ce modèle comme un candidat du modèle final :
-
-[
-\boxed{mod_Final = \text{Mixed_RIS}}
-]
-
-Par la suite, on va déterminer le meilleur modèle en comparant AIC,BIC et RMSE dans l'échantillon complet.
-
 On va mesurer le RMSE sur le train total avec notre modèle :
 
 ```{r}
@@ -2426,7 +2362,6 @@ négligeable d'actifs intrinsèquement risqués.
 
 # Calculer les intervalles de confiance pour un échantillon
 
-set.seed(123)
 sample_test <- test %>%
   sample_n(min(1000, nrow(test)))  # Maximum 1000 observations
 
@@ -2946,6 +2881,72 @@ cat("BIC:", bic_results$BIC[1], "\n")
 cat("AIC:", aic_results$AIC[aic_results$Modèle == best_model_name], "\n\n")
 
 ```
+
+
+
+# Tableau comparatif des RMSE de tous les modèles
+
+```{r comparaison_train_test, message=FALSE, warning=FALSE}
+
+
+perf_train_test <- data.frame(
+  Modele = c(
+    "OLS",
+    "LASSO_old",
+    "LASSO_new",
+    "Mixed_RI",
+    best_model_name
+  ),
+  RMSE_Train = c(
+    rmse_train_lm,
+    rmse_train,          # LASSO old 
+    rmse_train_new,      # LASSO new
+    rmse_ri_train,
+    rmse_ris_train
+  ),
+  RMSE_Test = c(
+    rmse_test_lm,
+    rmse_test,           # LASSO old 
+    rmse_test_new,       # LASSO new
+    rmse_ri_test,
+    rmse_ris_test
+  )
+)
+
+# generalisation gap
+perf_train_test <- perf_train_test %>%
+  mutate(Gap = RMSE_Test - RMSE_Train) %>%
+  arrange(RMSE_Test)
+
+kable(
+  perf_train_test,
+  caption = "Comparaison des performances Train / Test (évaluation hors-échantillon)",
+  align = "lrrr"
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed")
+  )
+
+```
+
+Parmi l’ensemble des modèles testés, le modèle à effets mixtes avec intercept et pente aléatoires (Mixed_RIS) obtient le RMSE le plus faible sur le jeu de test (8.85).
+
+Il présente également :
+
+* une amélioration significative par rapport aux modèles linéaires classiques,
+* une meilleure capacité de généralisation,
+* une cohérence économique forte.
+
+En effet, la structure hiérarchique des données (plusieurs observations par asset) justifie l’introduction d’effets aléatoires.
+La possibilité de faire varier la sensibilité au marché selon l’actif permet de mieux capturer l’hétérogénéité structurelle.
+
+Nous retenons donc ce modèle comme modèle final :
+
+[
+\boxed{mod_Final = \text{Mixed_RIS}}
+]
+
 
 ## 6.8 Analyse du modèle final et des effets aléatoires
 
@@ -3650,76 +3651,12 @@ la sensibilité aux variables macro-financières varie selon l’actif.
 En revanche, les modèles LASSO ne surpassent pas la régression linéaire classique dans cette évaluation in-sample.
 Cela s’explique par le biais introduit par la régularisation, qui pénalise les coefficients et réduit légèrement l’ajustement sur les données d’estimation.
 
+# Modèle black box
+
+## Modèle XGBOOST
 
 
-# Tableau comparatif des RMSE 
-
-```{r comparaison_train_test, message=FALSE, warning=FALSE}
-
-
-perf_train_test <- data.frame(
-  Modele = c(
-    "OLS",
-    "LASSO_old",
-    "LASSO_new",
-    "Mixed_RI",
-    "Mixed_RIS"
-  ),
-  RMSE_Train = c(
-    rmse_train_lm,
-    rmse_train,          # LASSO old 
-    rmse_train_new,      # LASSO new
-    rmse_ri_train,
-    rmse_ris_train
-  ),
-  RMSE_Test = c(
-    rmse_test_lm,
-    rmse_test,           # LASSO old 
-    rmse_test_new,       # LASSO new
-    rmse_ri_test,
-    rmse_ris_test
-  )
-)
-
-# generalisation gap
-perf_train_test <- perf_train_test %>%
-  mutate(Gap = RMSE_Test - RMSE_Train) %>%
-  arrange(RMSE_Test)
-
-kable(
-  perf_train_test,
-  caption = "Comparaison des performances Train / Test (évaluation hors-échantillon)",
-  align = "lrrr"
-) %>%
-  kable_styling(
-    full_width = FALSE,
-    bootstrap_options = c("striped", "hover", "condensed")
-  )
-
-```
-
-Parmi l’ensemble des modèles testés, le modèle à effets mixtes avec intercept et pente aléatoires (Mixed_RIS) obtient le RMSE le plus faible sur le jeu de test (8.85).
-
-Il présente également :
-
-* une amélioration significative par rapport aux modèles linéaires classiques,
-* une meilleure capacité de généralisation,
-* une cohérence économique forte.
-
-En effet, la structure hiérarchique des données (plusieurs observations par asset) justifie l’introduction d’effets aléatoires.
-La possibilité de faire varier la sensibilité au marché selon l’actif permet de mieux capturer l’hétérogénéité structurelle.
-
-Nous retenons donc ce modèle comme modèle final :
-
-[
-\boxed{mod_Final = \text{Mixed_RIS}}
-]
-
-
-# Modèle XGBOOST
-
-
-## Encodage
+### Encodage
 
 ```{r Encodage, message=FALSE, warning=FALSE}
 
@@ -3762,7 +3699,7 @@ test[is.na(asset_te),  asset_te := mu_global]
 
 ```
 
-## Entrainement et prédiction
+### Entrainement et prédiction
 
 ```{r xgboost, message=FALSE, warning=FALSE}
 
@@ -3829,3 +3766,66 @@ best_round
 rmse_train
 rmse_val
 ```
+
+
+
+
+## Calcul du rmse final XGBOOST
+
+```{r xgb_full, message=FALSE, warning=FALSE}
+library(xgboost)
+set.seed(2025)
+
+train_filtered <- train %>%
+  group_by(asset_id) %>%
+  filter(n() >= min_obs) %>%
+  ungroup()
+
+test_filtered <- test %>%
+  group_by(asset_id) %>%
+  filter(n() >= min_obs) %>%
+  ungroup()
+
+train_final <- bind_rows(train_filtered, test_filtered)
+
+vars_selected <- c(
+  "strike_dispersion","put_oi","maturity_count",
+  "realized_vol_short","realized_vol_long4","market_vol_index",
+  "rv_short_sq","rv_long_sq","mkt_sq",
+  "asset_te"
+)
+
+df_xgb <- train_final[, c("implied_vol_ref", vars_selected)]
+df_xgb <- df_xgb[complete.cases(df_xgb), ]  # XGB n'aime pas NA
+
+x_all <- as.matrix(df_xgb[, vars_selected])
+y_all <- df_xgb$implied_vol_ref
+
+dall <- xgb.DMatrix(data = x_all, label = y_all)
+
+params <- list(
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  eta = 0.05,
+  max_depth = 6,
+  min_child_weight = 10,
+  subsample = 0.8,
+  colsample_bytree = 0.8,
+  lambda = 1.0,
+  alpha = 0.0
+)
+
+xgb_fit_full <- xgb.train(
+  params = params,
+  data   = dall,
+  nrounds = 800,   # à ajuster 
+  verbose = 0
+)
+
+pred_all_xgb <- predict(xgb_fit_full, dall)
+rmse_all_xgb <- sqrt(mean((y_all - pred_all_xgb)^2))
+
+rmse_all_xgb
+
+```
+
