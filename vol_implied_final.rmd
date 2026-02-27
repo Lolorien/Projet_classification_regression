@@ -1762,7 +1762,7 @@ Cela peut limiter leur capacité prédictive.
 
 
 
-# 6.7 Modèle à effets mixtes
+## 6.7 Modèle à effets mixtes
 
 On a remarqué que nos données présentent une structure hiérarchique : la
 volatilité de certains asset est systématiquement plus élevée que
@@ -2029,7 +2029,7 @@ kable(perf_df2, caption = "Performances du modèle RI", align = "lcrrrr") %>%
 On a déjà réussi à diminuer le RMSE à 9.8 avec un R2 correct \> 0.8 mais
 on va l'améliorer en rajoutant également des pentes aléatoires.
 
-### Modèle avec intercept et pentes aléatoires
+### Modèle avec intercept et une pente aléatoire
 
 En rajoutant des pentes aléatoires, on a cette fois que chaque asset a
 son propre niveau de base et que sa sensibilité aux variables
@@ -2146,12 +2146,11 @@ kable(perf_df, caption = "Performances du modèle RIS", align = "lcrrrr") %>%
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
-On va mesurer le RMSE sur le train total avec notre modèle qui sera
-notre modèle final :
+On va mesurer le RMSE sur le train total avec notre modèle :
 
 ```{r}
 
-mod_Final <- lmer(
+mod_ris <- lmer(
   formula_ris,
   data = train_final,
   REML = FALSE,  # Maximum Likelihood pour comparaison de modèles
@@ -2161,30 +2160,28 @@ mod_Final <- lmer(
 ```
 
 ```{r}
-pred_ris_train_final <- predict(mod_Final, newdata = train_final)
+pred_ris_train_final <- predict(mod_ris, newdata = train_final)
 rmse_ris_train_final <- calc_rmse(train_final$implied_vol_ref, pred_ris_train_final)
 r2_ris_train_final <- calc_r2(train_final$implied_vol_ref, pred_ris_train_final)
 ```
 
 ```{r}
 perf_df3 <- data.frame(
-  Modele = "MODÈLE Final",
+  Modele = "MODÈLE ris",
   RMSE = round(rmse_ris_train_final, 4),
   R2   = round(r2_ris_train_final,   4)
 )
 
-kable(perf_df3, caption = "Performances du modèle final", align = "lcrrrr") %>%
+kable(perf_df3, caption = "Performances du modèle ris", align = "lcrrrr") %>%
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
-On obtient un RMSE final de 9.2 avec un R2 toujours convenable \> 0.8
-
-### Analyse des effets aléatoires
+On obtient un RMSE de 9.2 avec un R2 toujours convenable \> 0.8
 
 ```{r}
 
 
-# Extraire les effets aléatoires du meilleur modèle (RIS)
+# Extraire les effets aléatoires du modèle ris
 random_effects <- ranef(model_ris)$asset_id
 random_effects$asset_id <- rownames(random_effects)
 colnames(random_effects) <- c("Intercept", "Slope_realized_vol_short", "asset_id")
@@ -2300,10 +2297,6 @@ p5 <- ggplot(pred_vs_actual, aes(x = Actual, y = Predicted)) +
 p5
 ```
 
-------------------------------------------------------------------------
-
-## 
-
 Le R² de 84.27% indique que le modèle parvient à expliquer plus de
 quatre cinquièmes de la variance totale de la volatilité implicite. Dans
 le contexte des marchés financiers, où la volatilité est notoirement
@@ -2407,6 +2400,988 @@ On observe une expansion progressive de l'incertitude avec le niveau de
 volatilité , à cause du phénomène d'hétéroscédasticité des actifs très
 volatiles.
 
+### Comparaison de plusieurs modèles et choix du modèle final
+
+Ce modèle est déjà très bon, mais on peut essayer de l'améliorer en
+rajoutant des interactions et/ou des pentes aléatoires.
+
+En s'inspirant du cours, nous allons tester 18 modèles à effet mixte
+différents en faisant varier : les interactions, l'intercept aléatoire
+et le choix de la ou des pentes aléatoires.
+
+```{r}
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("CATÉGORIE 1 : MODÈLES À EFFETS FIXES UNIQUEMENT (5 modèles)\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+# Modèle 0 : Baseline simple (sans interaction)
+cat("Ajustement m0: Variables principales...\n")
+m0 <- lm(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi,
+  data = train_final
+)
+```
+
+```{r}
+# Modèle 1 : Ajout des termes quadratiques
+cat("Ajustement m1: + Termes quadratiques...\n")
+m1 <- lm(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq,
+  data = train_final
+)
+```
+
+```{r}
+# Modèle 2 : Interaction realized_vol_short * market_vol_index
+cat("Ajustement m2: + Interaction RV_short × Market_vol...\n")
+m2 <- lm(
+  implied_vol_ref ~ 
+    realized_vol_short * market_vol_index + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq,
+  data = train_final
+)
+```
+
+```{r}
+# Modèle 3 : Interaction realized_vol_short * strike_dispersion
+cat("Ajustement m3: + Interaction RV_short × Strike_disp...\n")
+m3 <- lm(
+  implied_vol_ref ~ 
+    realized_vol_short * strike_dispersion + 
+    realized_vol_long4 + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq,
+  data = train_final
+)
+```
+
+```{r}
+# Modèle 4 : Modèle complet avec toutes interactions
+cat("Ajustement m4: + Multiples interactions...\n")
+m4 <- lm(
+  implied_vol_ref ~ 
+    realized_vol_short * market_vol_index + 
+    realized_vol_short * strike_dispersion + 
+    realized_vol_long4 + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq,
+  data = train_final
+)
+```
+
+```{r}
+
+
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("CATÉGORIE 2 : INTERCEPT ALÉATOIRE (1 | asset_id) - 5 modèles\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+# Modèle 5 : Intercept aléatoire + variables principales
+cat("Ajustement m5: Random intercept baseline...\n")
+m5 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi + 
+    (1 | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+```
+
+```{r}
+# Modèle 6 : + Termes quadratiques
+cat("Ajustement m6: Random intercept + quadratiques...\n")
+m6 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+```
+
+```{r}
+# Modèle 7 : + Interaction RV_short × Market
+cat("Ajustement m7: Random intercept + interaction RV×Market...\n")
+m7 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short * market_vol_index + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+```
+
+```{r}
+# Modèle 8 : + Interaction RV_short × Strike
+cat("Ajustement m8: Random intercept + interaction RV×Strike...\n")
+m8 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short * strike_dispersion + 
+    realized_vol_long4 + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+```
+
+```{r}
+# Modèle 9 : + Multiples interactions
+cat("Ajustement m9: Random intercept + multiples interactions...\n")
+m9 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short * market_vol_index + 
+    realized_vol_short * strike_dispersion + 
+    realized_vol_long4 + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+```
+
+```{r}
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("CATÉGORIE 3 : INTERCEPT + PENTE ALÉATOIRE (RV_short) - 4 modèles\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+# Modèle 10 : Pente aléatoire RV_short (pentes indépendantes)
+cat("Ajustement m10: Random slope RV_short (indépendant)...\n")
+m10 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 | asset_id) + 
+    (0 + realized_vol_short | asset_id),  # Pente seule
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+```
+
+```{r}
+
+# Modèle 11 : Intercept + Pente aléatoires CORRÉLÉS (modèle complet)
+cat("Ajustement m11: Random intercept + slope RV_short (corrélés)...\n")
+m11 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 + realized_vol_short | asset_id),  # Corrélés
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+```
+
+```{r}
+# Modèle 12 : + Interaction RV_short × Market
+cat("Ajustement m12: Random intercept+slope + interaction RV×Market...\n")
+m12 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short * market_vol_index + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 + realized_vol_short | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+```
+
+```{r}
+# Modèle 13 : + Multiples interactions
+cat("Ajustement m13: Random intercept+slope + multiples interactions...\n")
+m13 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short * market_vol_index + 
+    realized_vol_short * strike_dispersion + 
+    realized_vol_long4 + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 + realized_vol_short | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+```
+
+```{r}
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("CATÉGORIE 4 : MULTIPLES PENTES ALÉATOIRES - 4 modèles\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+# Modèle 14 : Pentes aléatoires RV_short + RV_long (indépendantes)
+cat("Ajustement m14: Random slopes RV_short + RV_long (indépendantes)...\n")
+m14 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 | asset_id) + 
+    (0 + realized_vol_short | asset_id) + 
+    (0 + realized_vol_long4 | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 3e5))
+)
+```
+
+```{r}
+# Modèle 15 : Intercept + 2 pentes aléatoires corrélées
+cat("Ajustement m15: Random intercept + slopes RV_short + RV_long (corrélés)...\n")
+m15 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 + realized_vol_short + realized_vol_long4 | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 3e5))
+)
+```
+
+```{r}
+# Modèle 16 : + Pente aléatoire sur market_vol_index aussi
+cat("Ajustement m16: Random slopes RV_short + RV_long + Market...\n")
+m16 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short + 
+    realized_vol_long4 + 
+    strike_dispersion + 
+    market_vol_index + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 + realized_vol_short + realized_vol_long4 + market_vol_index | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 5e5))
+)
+```
+
+```{r}
+
+# Modèle 17 : Modèle maximal avec interactions
+cat("Ajustement m17: Modèle maximal (toutes pentes + interactions)...\n")
+m17 <- lmer(
+  implied_vol_ref ~ 
+    realized_vol_short * market_vol_index + 
+    realized_vol_short * strike_dispersion + 
+    realized_vol_long4 + 
+    put_oi + 
+    rv_short_sq + 
+    rv_long_sq + 
+    mkt_sq + 
+    (1 + realized_vol_short + realized_vol_long4 + market_vol_index | asset_id),
+  data = train_final,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 5e5))
+)
+
+
+
+
+```
+
+Comparons les modèles suivants les métriques usuelles :
+
+```{r}
+bic_results <- BIC(m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, 
+                   m10, m11, m12, m13, m14, m15, m16, m17) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Modèle") %>%
+  rename(BIC = BIC) %>%
+  arrange(BIC) %>%
+  mutate(
+    Delta_BIC = BIC - min(BIC),
+    Categorie = case_when(
+      Modèle %in% c("m0", "m1", "m2", "m3", "m4") ~ "1. Effets fixes",
+      Modèle %in% c("m5", "m6", "m7", "m8", "m9") ~ "2. Random intercept",
+      Modèle %in% c("m10", "m11", "m12", "m13") ~ "3. Random slope (RV_short)",
+      TRUE ~ "4. Multiples slopes"
+    )
+  ) %>%
+  dplyr::select(Modèle, Categorie, df, BIC, Delta_BIC)
+
+aic_results <- AIC(m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, 
+                   m10, m11, m12, m13, m14, m15, m16, m17) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Modèle") %>%
+  rename(AIC = AIC) %>%
+  arrange(AIC) %>%
+  mutate(
+    Delta_AIC = AIC - min(AIC),
+    Categorie = case_when(
+      Modèle %in% c("m0", "m1", "m2", "m3", "m4") ~ "1. Effets fixes",
+      Modèle %in% c("m5", "m6", "m7", "m8", "m9") ~ "2. Random intercept",
+      Modèle %in% c("m10", "m11", "m12", "m13") ~ "3. Random slope (RV_short)",
+      TRUE ~ "4. Multiples slopes"
+    )
+  ) %>%
+  dplyr::select(Modèle, Categorie, df, AIC, Delta_AIC)
+```
+
+```{r}
+print(bic_results)
+```
+
+```{r}
+# Graphique de comparaison
+p_comparison <- ggplot(performance_results, aes(x = reorder(Modèle, RMSE), y = RMSE)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Comparaison des 18 Modèles à Effets Mixtes",
+    subtitle = "Critère RMSE",
+    x = "Modèle",
+    y = "RMSE"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom"
+  )
+p_comparison
+```
+
+On constate donc que le modèle qui optimise toutes les métriques et qui
+minimise le RMSE est le modèle 17 comprenant toutes les pentes
+aléatoires et toutes les interactions. Nous n'allons donc le prendre
+comme modèle final et l'étudier plus en détails.
+
+```{r}
+
+models <- head(bic_results$Modèle, 17)
+
+# Fonction pour calculer les métriques
+calc_metrics <- function(model, data) {
+  predictions <- predict(model, newdata = data)
+  actual <- data$implied_vol_ref
+  
+  rmse <- sqrt(mean((actual - predictions)^2, na.rm = TRUE))
+  r2 <- cor(actual, predictions, use = "complete.obs")^2
+  mae <- mean(abs(actual - predictions), na.rm = TRUE)
+  
+  return(data.frame(RMSE = rmse, R2 = r2, MAE = mae))
+}
+
+# Calculer pour chaque top modèle
+performance_results <- data.frame()
+
+for (model_name in models) {
+  model <- get(model_name)
+  metrics <- calc_metrics(model, train_final)
+  metrics$Modèle <- model_name
+  performance_results <- bind_rows(performance_results, metrics)
+}
+
+performance_results <- performance_results %>%
+  dplyr::select(Modèle, RMSE, R2, MAE) %>%
+  arrange(RMSE)
+
+print(performance_results, row.names = FALSE)
+
+
+# ----------------------------------------------------------------------------
+# RÉSUMÉ DU MEILLEUR MODÈLE
+# ----------------------------------------------------------------------------
+
+cat("\n\n╔══════════════════════════════════════════════════════════════╗\n")
+cat("║                   MEILLEUR MODÈLE (RMSE)                      ║\n")
+cat("╚══════════════════════════════════════════════════════════════╝\n\n")
+
+best_model_name <- performance_results$Modèle[1]
+best_model <- get(best_model_name)
+
+cat("Modèle sélectionné:", best_model_name, "\n")
+cat("BIC:", bic_results$BIC[1], "\n")
+cat("AIC:", aic_results$AIC[aic_results$Modèle == best_model_name], "\n\n")
+
+```
+
+## 6.8 Analyse du modèle final et des effets aléatoires
+
+### Résumé et interprétation du modèle final
+
+Le modèle m17 est le plus complexe parmi les 18 modèles comparés. Ce
+modèle maximal a été sélectionné par les critères AIC et BIC comme le
+meilleur compromis entre qualité d'ajustement et parcimonie, donc malgré
+sa complexité il n'y a pas à s'inquiéter d'un possible
+sur-apprentissage. Cette sélection révèle que la complexité structurelle
+du marché des options justifie une modélisation sophistiquée capturant
+de multiples sources d'hétérogénéité et d'interactions non-linéaires.
+
+Le modèle incorpore trois composantes majeures : des effets fixes
+incluant interactions entre variables, trois pentes aléatoires
+distinctes pour realized_vol_short, realized_vol_long4 et
+market_vol_index, permettant à chaque actif d'avoir ses propres
+sensibilités à ces trois composantes clés, et une structure de
+corrélation entre ces effets aléatoires, capturée par une matrice de
+variance-covariance 4×4.
+
+Sa formule se décompose comme suit :
+
+**Effets fixes** : - Intercept global β₀ - Effets principaux :
+realized_vol_short, market_vol_index, strike_dispersion,
+realized_vol_long4, put_oi - Termes quadratiques : rv_short_sq,
+rv_long_sq, mkt_sq (capturent non-linéarités) - Interactions :
+realized_vol_short × market_vol_index, realized_vol_short ×
+strike_dispersion
+
+**Effets aléatoires** (par actif i) : - Intercept aléatoire : η_i0
+(niveau de base spécifique) - Pente aléatoire pour RV_short : η_i1
+(sensibilité spécifique à vol réalisée courte) - Pente aléatoire pour
+RV_long4 : η_i2 (sensibilité spécifique à vol réalisée longue) - Pente
+aléatoire pour Market_vol : η_i3 (sensibilité spécifique à vol de
+marché)
+
+A noter que le nombre de paramètres est substantiel mais bien justifier
+par le nombre de données et leurs complexités.
+
+```{r}
+model_final <- best_model
+```
+
+```{r}
+print(summary(model_final))
+```
+
+Comme avant, les résidus ont une moyenne nulle ce qui est bon signe. Les
+quartiles sont symmétriques et suffisament resserrés et une forte
+concentration des résidus en 0.
+
+Nous avons toujours le même problème de valeurs extrêmes des résidus,
+comme précédemment, qu'on étudiera plus en détails plus loin.
+
+Comme attendu, la variance de la pente aléatoire Market_index est la
+plus faible des trois pentes, montrant que le climat macroéconomique a
+un impact qui varie peu entre les actifs. Cependant, la pente aléatoire
+liée à RV_long4 a la variance la plus élevée. Autrement dit,la
+sensibilité à realized_vol_long4 présente une hétérogénéité massive,
+plus grand encore que celle de RV_short étudiée précédemment. Cette
+dispersion suggère que certains actifs réagissent fortement à la
+volatilité historique long terme tandis que d'autres l'ignorent
+complètement, voire y réagissent de manière contraire (mécanisme de mean
+reversion).
+
+Variance totale approximative = 360,8 + 33,7 + 181,8 + 10,0 + 71,2 =
+**657,5**
+
+Contributions relatives : - Intercept : 360,8 / 657,5 = **54,9%** -
+Pente RV_short : 33,7 / 657,5 = **5,1%** - Pente RV_long4 : 181,8 /
+657,5 = **27,7%** - Pente Market_vol : 10,0 / 657,5 = **1,5%** -
+Résiduelle : 71,2 / 657,5 = **10,8%**
+
+Plus de **89% de la variance totale** provient des différences entre
+actifs (effets aléatoires), contre seulement 11% de variation temporelle
+résiduelle. Cela confirme que la structure hiérarchique est
+**fondamentale** et justifie pleinement l'approche à effets mixtes.
+
+La pente aléatoire RV_long4 explique **27,7% de la variance totale**. Il
+est donc nécessire de l'ajouter comme pente aléatoire et ne pas
+s'arrêter à une seule pente comme le modèle précédent.
+
+Concernant les corrélations, deux groupes émergent : Intercept,
+RV_short, RV_long4 sont modéremment et positivement corrélés entre eux.
+C'est la dimension du risque idiosyncratique de l'actif. Le market_vol
+est quand à lui quasiment indépendant des autres, c'est la dimension
+systémique du risque.
+
+Cette structure à deux dimensions révèle que le risque d'un actif dans
+le marché des options se décompose en un risque idiosyncratique (capturé
+par niveau de base + sensibilités aux vols réalisées) et un risque
+systémique (sensibilité au marché), ces deux dimensions étant largement
+orthogonales.
+
+Concernant les effets fixes, on constate juste comme changement notable
+que le put_oi n'est presque plus significatif : l'inclusion des
+interactions et multiples pentes aléatoires a absorbé la variabilité que
+put_oi capturait précédemment.
+
+Même remarque que précédemment concernant la non-linéarité et la
+concavité.
+
+Les deux interactions rajoutées entre RV_short et market_vol et
+strike_dispersion sont très significatifs. Autrement dit, L'effet de
+RV_short sur implied_vol **s'amplifie** lorsque la volatilité de marché
+est élevée. De plus, l'effet de RV_short sur implied_vol **diminue**
+lorsque strike_dispersion est élevée. Peut-être parce que sur un marché
+liquide, on peut mieux gérer les chocs en se couvrant plus facilement.
+
+```{r}
+# Calculer prédictions et résidus
+train_final$fitted_values <- fitted(model_final)
+train_final$residuals <- residuals(model_final)
+train_final$std_residuals <- residuals(model_final, type = "pearson")
+```
+
+```{r}
+# Métriques de performance
+rmse_final <- sqrt(mean(train_final$residuals^2, na.rm = TRUE))
+r2_final <- cor(train_final$implied_vol_ref, train_final$fitted_values)^2
+mae_final <- mean(abs(train_final$residuals), na.rm = TRUE)
+```
+
+```{r}
+# Décomposition de la variance
+var_components <- as.data.frame(VarCorr(model_final))
+var_intercept <- var_components$vcov[1]
+var_slope <- var_components$vcov[2]
+var_residual <- var_components$vcov[3]
+
+var_total <- var_intercept + var_slope + var_residual
+icc <- var_intercept / var_total
+```
+
+```{r}
+cat("╔════════════════════════════════════════════════════╗\n")
+cat("   DÉCOMPOSITION DE LA VARIANCE                     \n")
+cat("╠════════════════════════════════════════════════════╣\n")
+cat("  Variance intercept:  ", sprintf("%.2f", var_intercept), " (", sprintf("%.1f", 100*var_intercept/var_total), "%)", "  \n")
+cat("  Variance pente:      ", sprintf("%.2f", var_slope), " (", sprintf("%.1f", 100*var_slope/var_total), "%)", "   \n")
+cat("  Variance résiduelle: ", sprintf("%.2f", var_residual), " (", sprintf("%.1f", 100*var_residual/var_total), "%)", "  \n")
+cat("  ICC:                 ", sprintf("%.3f", icc), "                       \n")
+
+```
+
+Après avoir modélisé trois pentes aléatoires, l'écart-type résiduel
+descend a bien descendu, une amélioration par rapport aux modèles plus
+simples. Chaque pente aléatoire additionnelle a contribué à réduire la
+variance non expliquée. On peut faire les mêmes remarques que
+précédemment sur l'ICC.
+
+### Diagnostic des résidus
+
+```{r}
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("DIAGNOSTICS DES RÉSIDUS\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+# ----------------------------------------------------------------------------
+#Résidus vs Fitted
+# ----------------------------------------------------------------------------
+
+
+p1 <- ggplot(
+  train_final %>% sample_n(min(10000, nrow(train_final))),
+  aes(x = fitted_values, y = residuals)
+) +
+  geom_point(alpha = 0.3, color = "steelblue", size = 0.8) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1) +
+  geom_smooth(method = "loess", color = "orange", se = TRUE) +
+  labs(
+    title = "Résidus vs Valeurs Ajustées",
+    subtitle = "Vérification de l'homoscédasticité et linéarité",
+    x = "Valeurs Ajustées (Fitted)",
+    y = "Résidus"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+p1
+```
+
+On a bien des résidus concentrés autour de 0, donc pas de biais
+systématique. On a comme avant une légère hétéroscédascticité car la
+variance des erreurs augmente avec la volatilité, mais c'est cohérent :
+les actifs volatiles sont moins prévisibles. C'est suffisament faible
+pour qu'on puisse garder l'hypothèse d'homoscédasticité. On voit des
+outliers qu'on étudiera après.
+
+```{r}
+# ----------------------------------------------------------------------------
+# Histogram des résidus
+# ----------------------------------------------------------------------------
+
+
+p3 <- ggplot(train_final, aes(x = std_residuals)) +
+  geom_histogram(bins = 100, fill = "steelblue", color = "white", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed", size = 1) +
+  stat_function(
+    fun = function(x) dnorm(x, mean = 0, sd = 1) * nrow(train_final) * 
+      (max(train_final$std_residuals) - min(train_final$std_residuals)) / 100,
+    color = "orange", size = 1
+  ) +
+  labs(
+    title = "Distribution des Résidus Standardisés",
+    subtitle = "Comparaison avec loi normale N(0,1)",
+    x = "Résidus Standardisés",
+    y = "Fréquence"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+p3
+```
+
+Les résidus standardisés suivent presque une loi normale de moyenne
+nulle. La distribution est symmétrique centrée en 0 mais le pic est trop
+prononcé. Encore une fois, on peut garder l'hypothèse de normalité des
+résidus car la déviation est suffisament faible.
+
+```{r}
+# ----------------------------------------------------------------------------
+# Scale-Location (homoscédasticité)
+# ----------------------------------------------------------------------------
+
+train_final$sqrt_abs_resid <- sqrt(abs(train_final$std_residuals))
+
+p4 <- ggplot(
+  train_final %>% sample_n(min(10000, nrow(train_final))),
+  aes(x = fitted_values, y = sqrt_abs_resid)
+) +
+  geom_point(alpha = 0.3, color = "steelblue", size = 0.8) +
+  geom_smooth(method = "loess", color = "red", se = TRUE) +
+  labs(
+    title = "Scale-Location Plot",
+    subtitle = "Vérification de l'homogénéité de la variance",
+    x = "Valeurs Ajustées",
+    y = "√|Résidus Standardisés|"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+p4
+```
+
+On a bien une faible hétéroscédasticité comme dit précédemment. On
+aurait pu modéliser le log de la volatilité implicite pour la réduire
+mais on aurait également réduit l'interprétabilité des résultats.
+
+### Diagnostic des effets aléatoires
+
+```{r}
+
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("DIAGNOSTICS DES EFFETS ALÉATOIRES\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+# Extraire les effets aléatoires
+random_effects <- ranef(model_final)$asset_id
+colnames(random_effects) <- c("Intercept", "Slope_RV_short","Slope_RV_long","Market_index")
+
+# Statistiques descriptives
+cat("Statistiques des Intercepts Aléatoires:\n")
+print(summary(random_effects$Intercept))
+cat("\nStatistiques des Pentes Aléatoires :\n")
+cat("Slope_RV_short")
+cat("\n")
+print(summary(random_effects$Slope_RV_short))
+cat("\n")
+cat("Slope_RV_long")
+cat("\n")
+print(summary(random_effects$Slope_RV_long))
+cat("\n")
+cat("Market_index")
+cat("\n")
+print(summary(random_effects$Market_index))
+cat("\n")
+```
+
+```{r}
+# ----------------------------------------------------------------------------
+#Corrélation Intercept vs Slope
+# ----------------------------------------------------------------------------
+
+
+random_effects$asset_id <- rownames(random_effects)
+
+p8 <- ggplot(random_effects, aes(x = Intercept, y = Slope_RV_short)) +
+  geom_point(alpha = 0.5, color = "steelblue", size = 2) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(
+    title = "Corrélation entre Intercepts et Pentes Aléatoires",
+    subtitle = paste0("Corrélation estimée = ", 
+                     sprintf("%.3f", cor(random_effects$Intercept, random_effects$Slope_RV_short))),
+    x = "Intercept Aléatoire (η_i0)",
+    y = "Pente Aléatoire (η_i1) pour RV_short"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+p8
+```
+
+On a maintenant une corrélation modérée positive entre la pente
+aléatoire de RV_short et l'intercept (on aurait pareil avec RV_long).
+
+On peut repérer 4 profils d'actifs : Actifs à volatilité de base élevée
+ET réactifs (en haut à droite), stables mais réactifs (en haut à
+gauche), stables et peu réactifs (en bas à gauche) et volatils mais peu
+réactifs (en bas à droite). Celà peut s'avérer très utile dans le cadre
+d'une gestion d'un portefeuille d'actifs. (cf short rapport)
+
+La corrélation positive de révèle que les risques de **niveau**
+(intercept) et de **dynamique** (pente) tendent à se **cumuler** plutôt
+qu'à se compenser, contrairement à précédemment. Autrement dit : - Les
+actifs déjà structurellement volatils sont AUSSI ceux qui amplifient le
+plus les chocs de volatilité réalisée - Les actifs stables tendent à
+rester stables même face aux variations de RV_short
+
+### Diagnostic des outliers
+
+```{r}
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("OUTLIERS ET OBSERVATIONS INFLUENTES\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+
+
+cat("OUTLIERS DANS LES RÉSIDUS\n")
+cat("────────────────────────────────────────────────────────────────\n\n")
+
+# Résidus standardisés > 10
+outliers_residuals <- train_final %>%
+  mutate(abs_std_resid = abs(std_residuals)) %>%
+  filter(abs_std_resid > 10) %>%
+  arrange(desc(abs_std_resid)) %>%
+  dplyr::select(asset_id, obs_date, implied_vol_ref, fitted_values, residuals, std_residuals)
+
+cat("Nombre d'outliers (|résidu std| > 10):", nrow(outliers_residuals), "\n")
+cat("Pourcentage:", sprintf("%.2f%%", 100 * nrow(outliers_residuals) / nrow(train_final)), "\n\n")
+
+if (nrow(outliers_residuals) > 0) {
+  cat("Top 20 outliers:\n")
+  print(head(outliers_residuals, 20))
+}
+```
+
+Les outliers dans les résidus ne sont pas dus à un ou plusieurs assets
+problèmatiques mais plutôt à une période de temps problèmatique : celle
+du covid.
+
+```{r}
+cat("\n ASSETS AVEC EFFETS ALÉATOIRES EXTRÊMES\n")
+cat("────────────────────────────────────────────────────────────────\n\n")
+
+# Top 10 intercepts positifs
+top10_high_intercept <- random_effects %>%
+  arrange(desc(Intercept)) %>%
+  head(10)
+
+cat("Top 10 Assets - Intercepts les PLUS ÉLEVÉS:\n")
+print(top10_high_intercept %>% dplyr::select(Intercept, Slope_RV_short))
+
+# Top 10 intercepts négatifs
+top10_low_intercept <- random_effects %>%
+  arrange(Intercept) %>%
+  head(10)
+
+cat("\n\nTop 10 Assets - Intercepts les PLUS FAIBLES:\n")
+print(top10_low_intercept %>% dplyr::select(Intercept, Slope_RV_short))
+
+# Top 10 pentes positives (plus réactifs)
+top10_high_slope <- random_effects %>%
+  arrange(desc(Slope_RV_short)) %>%
+  head(10)
+
+cat("\n\nTop 10 Assets - Pentes les PLUS ÉLEVÉES (très réactifs):\n")
+print(top10_high_slope %>% dplyr::select(Intercept, Slope_RV_short))
+
+# Top 10 pentes négatives (moins réactifs)
+top10_low_slope <- random_effects %>%
+  arrange(Slope_RV_short) %>%
+  head(10)
+
+cat("\n\nTop 10 Assets - Pentes les PLUS FAIBLES (peu réactifs):\n")
+print(top10_low_slope %>% dplyr::select(Intercept, Slope_RV_short))
+```
+
+Comme dit précédemment, ce genre de classement peut-être très utile pour
+mettre en place une stratégie d'investissement.
+
+```{r}
+cat("\n DISTANCE DE MAHALANOBIS (Effets Aléatoires Bivariés)\n")
+cat("────────────────────────────────────────────────────────────────\n\n")
+
+# Calculer distance de Mahalanobis
+random_matrix <- as.matrix(random_effects[, c("Intercept", "Slope_RV_short")])
+mahal_dist <- mahalanobis(random_matrix, 
+                          center = colMeans(random_matrix), 
+                          cov = cov(random_matrix))
+
+random_effects$mahal_distance <- mahal_dist
+
+# Chi-square avec 2 df, seuil 97.5% = 7.38
+threshold_mahal <- qchisq(0.975, df = 2)
+
+outliers_mahal <- random_effects %>%
+  filter(mahal_distance > threshold_mahal) %>%
+  arrange(desc(mahal_distance))
+
+cat("Seuil Mahalanobis (χ²(2) 97.5%):", sprintf("%.2f", threshold_mahal), "\n")
+cat("Nombre d'outliers multivariés:", nrow(outliers_mahal), "\n\n")
+
+if (nrow(outliers_mahal) > 0) {
+  cat("Assets avec effets aléatoires atypiques (Mahalanobis):\n")
+  print(head(outliers_mahal %>% dplyr::select(Intercept, Slope_RV_short, mahal_distance), 20))
+  
+}
+
+```
+
+On a 158 assets avec des effets aléatoires atypiques, ce qui est quand
+même important sur les 3880 que nous avons.
+
+La distance de Mahalanobis mesure à quel point un point multivarié (ici
+: paire [Intercept, Pente]) s'écarte du centre de la distribution, en
+tenant compte de la **corrélation** entre les variables et de leurs
+variances respectives.
+
+158 actifs sur 3 880 = **4,1%** dépassent le seuil, soit presque le
+**double** du 2,5% attendu.
+
+Les effets aléatoires suivent une distribution à **queues plus
+épaisses** que la normale stricte. Ainsi, les événements extrêmes
+(actifs très atypiques) sont plus fréquents qu'une normale ne le
+prédirait.
+
+### Récapitulatif du meilleur modèle
+
+```{r}
+
+# ----------------------------------------------------------------------------
+# Vérification de la convergence
+# ----------------------------------------------------------------------------
+
+
+convergence_code <- model_final@optinfo$conv$opt
+cat("Code de convergence:", convergence_code, "\n")
+cat("  ", ifelse(convergence_code == 0, "✓ Convergence atteinte", "⚠️ Problème de convergence"), "\n\n")
+
+if (length(model_final@optinfo$conv$lme4$messages) > 0) {
+  cat("Messages d'avertissement:\n")
+  cat(paste(model_final@optinfo$conv$lme4$messages, collapse = "\n"), "\n\n")
+} else {
+  cat("✓ Aucun message d'avertissement\n\n")
+}
+
+
+# ============================================================================
+# TABLEAU RÉCAPITULATIF
+# ============================================================================
+
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("TABLEAU RÉCAPITULATIF\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+# Créer tableau récapitulatif
+summary_table <- data.frame(
+  Métrique = c(
+    "RMSE", "R²", "MAE",
+    "Variance Intercept", "Variance Pente", "Variance Résiduelle",
+    "ICC", "Corrélation Intercept-Pente",
+    "Nb Outliers Résidus (|std| > 10)", "% Outliers",
+    "Nb Assets Outliers (Mahalanobis)", "Convergence"
+  ),
+  Valeur = c(
+    sprintf("%.4f", rmse_final),
+    sprintf("%.4f", r2_final),
+    sprintf("%.4f", mae_final),
+    sprintf("%.2f", var_intercept),
+    sprintf("%.2f", var_slope),
+    sprintf("%.2f", var_residual),
+    sprintf("%.3f", icc),
+    sprintf("%.3f", cor(random_effects$Intercept, random_effects$Slope_RV_short)),
+    as.character(nrow(outliers_residuals)),
+    sprintf("%.2f%%", 100 * nrow(outliers_residuals) / nrow(train_final)),
+    as.character(nrow(outliers_mahal)),
+    ifelse(convergence_code == 0, "OK", "Problème")
+  )
+)
+
+print(summary_table, row.names = FALSE)
+```
 
 # Évaluation des modèles sur l’ensemble des données
 
