@@ -2146,6 +2146,70 @@ kable(perf_df, caption = "Performances du modèle RIS", align = "lcrrrr") %>%
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
+# Tableau comparatif des RMSE 
+
+```{r comparaison_train_test, message=FALSE, warning=FALSE}
+
+
+perf_train_test <- data.frame(
+  Modele = c(
+    "OLS",
+    "LASSO_old",
+    "LASSO_new",
+    "Mixed_RI",
+    "Mixed_RIS"
+  ),
+  RMSE_Train = c(
+    rmse_train_lm,
+    rmse_train,          # LASSO old 
+    rmse_train_new,      # LASSO new
+    rmse_ri_train,
+    rmse_ris_train
+  ),
+  RMSE_Test = c(
+    rmse_test_lm,
+    rmse_test,           # LASSO old 
+    rmse_test_new,       # LASSO new
+    rmse_ri_test,
+    rmse_ris_test
+  )
+)
+# generalisation gap
+perf_train_test <- perf_train_test %>%
+  mutate(Gap = RMSE_Test - RMSE_Train) %>%
+  arrange(RMSE_Test)
+
+kable(
+  perf_train_test,
+  caption = "Comparaison des performances Train / Test (évaluation hors-échantillon)",
+  align = "lrrr"
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed")
+  )
+
+```
+
+Parmi l’ensemble des modèles testés, le modèle à effets mixtes avec intercept et pente aléatoires (Mixed_RIS) obtient le RMSE le plus faible sur le jeu de test (8.85).
+
+Il présente également :
+
+* une amélioration significative par rapport aux modèles linéaires classiques,
+* une meilleure capacité de généralisation,
+* une cohérence économique forte.
+
+En effet, la structure hiérarchique des données (plusieurs observations par asset) justifie l’introduction d’effets aléatoires.
+La possibilité de faire varier la sensibilité au marché selon l’actif permet de mieux capturer l’hétérogénéité structurelle.
+
+On retient donc premièrement ce modèle comme un candidat du modèle final :
+
+[
+\boxed{mod_Final = \text{Mixed_RIS}}
+]
+
+Par la suite, on va déterminer le meilleur modèle en comparant AIC,BIC et RMSE dans l'échantillon complet.
+
 On va mesurer le RMSE sur le train total avec notre modèle :
 
 ```{r}
