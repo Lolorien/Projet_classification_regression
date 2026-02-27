@@ -3892,4 +3892,27 @@ rmse_all_xgb <- sqrt(mean((y_all - pred_all_xgb)^2))
 rmse_all_xgb
 
 ```
+```{r rmse_comparison, echo=FALSE}
 
+library(tibble)
+library(knitr)
+library(dplyr)
+
+rmse_table <- tibble(
+  Modele = c("Modèle final retenu", "XGBoost"),
+  RMSE   = c(rmse_final, rmse_all_xgb)
+) 
+
+kable(
+  rmse_table,
+  digits = 4,
+  caption = "Comparaison des RMSE – Modèle final vs XGBoost"
+)
+
+```
+
+Le modèle XGBoost, capable de capturer des non-linéarités et des interactions complexes.
+
+XGBoost obtient donc une performance légèrement supérieure.
+
+Dans ce contexte, le modèle final conserve un intérêt important, notamment en termes d’interprétabilité économique et de stabilité, pour un coût en performance prédictive relativement faible.
