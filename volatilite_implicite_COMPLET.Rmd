@@ -2250,3 +2250,21 @@ kable(
   )
 
 ```
+
+Parmi l’ensemble des modèles testés, le modèle à effets mixtes avec intercept et pente aléatoires (Mixed_RIS) obtient le RMSE le plus faible sur le jeu de test (8.85).
+
+Il présente également :
+
+* une amélioration significative par rapport aux modèles linéaires classiques,
+* une meilleure capacité de généralisation,
+* une cohérence économique forte.
+
+En effet, la structure hiérarchique des données (plusieurs observations par asset) justifie l’introduction d’effets aléatoires.
+La possibilité de faire varier la sensibilité au marché selon l’actif permet de mieux capturer l’hétérogénéité structurelle.
+
+Nous retenons donc ce modèle comme modèle final :
+
+[
+\boxed{mod_Final = \text{Mixed_RIS}}
+]
+
