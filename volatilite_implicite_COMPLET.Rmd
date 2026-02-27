@@ -664,6 +664,22 @@ Une stabilisation en 2021 à des niveaux plus modérés.
 
 Cela confirme que la volatilité implicite capte bien les périodes de stress de marché et présente des régimes différents selon le contexte économique.
 
+```{r}
+DATA[, .(
+  mean   = mean(implied_vol_ref, na.rm = TRUE),
+  median = median(implied_vol_ref, na.rm = TRUE),
+  sd     = sd(implied_vol_ref, na.rm = TRUE),
+  skew   = moments::skewness(implied_vol_ref, na.rm = TRUE),
+  kurt   = moments::kurtosis(implied_vol_ref, na.rm = TRUE),
+  min    = min(implied_vol_ref, na.rm = TRUE),
+  max    = max(implied_vol_ref, na.rm = TRUE)
+)]
+```
+On observe que la moyenne (45.71) est supérieure à la médiane (39.8), ce qui traduit une asymétrie à droite, confirmée par le coefficient de skewness (1.21). La distribution est donc marquée par des valeurs élevées qui tirent la moyenne vers le haut.
+
+La kurtosis (4.46), supérieure à celle d’une distribution normale, indique la présence de queues épaisses : les épisodes de forte volatilité ne sont pas exceptionnels.
+
+L’écart-type relativement élevé (25.09) ainsi que l’amplitude importante entre le minimum (1) et le maximum (149) montrent que la volatilité implicite présente une variabilité importante, cohérente avec les différents régimes de marché observés précédemment.
 
 # III. Split temporel des données
 
@@ -1535,20 +1551,20 @@ pred_lasso_val <- predict(
 rmse <- function(y, yhat) sqrt(mean((y - yhat)^2, na.rm = TRUE))
 r2   <- function(y, yhat) 1 - sum((y - yhat)^2, na.rm = TRUE) / sum((y - mean(y, na.rm = TRUE))^2, na.rm = TRUE)
 
-rmse_train <- rmse(y_train, pred_lasso_train)
-rmse_test  <- rmse(y_val,  pred_lasso_val)
+rmse_train_new <- rmse(y_train, pred_lasso_train)
+rmse_test_new  <- rmse(y_val,  pred_lasso_val)
 
-r2_train <- r2(y_train, pred_lasso_train)
-r2_test  <- r2(y_val,  pred_lasso_val)
+r2_train_new <- r2(y_train, pred_lasso_train)
+r2_test_new  <- r2(y_val,  pred_lasso_val)
 
 #  Tableau 
 perf_df <- data.frame(
   Modele = "LASSO",
   Lambda = round(cv_lasso$lambda.1se, 6),
-  RMSE_Train = round(rmse_train, 4),
-  RMSE_Test  = round(rmse_test,  4),
-  R2_Train   = round(r2_train,   4),
-  R2_Test    = round(r2_test,    4)
+  RMSE_Train = round(rmse_train_new, 4),
+  RMSE_Test  = round(rmse_test_new,  4),
+  R2_Train   = round(r2_train_new,   4),
+  R2_Test    = round(r2_test_new,    4)
 )
 
 kable(perf_df, caption = "Performances du modèle LASSO", align = "lcrrrr") %>%
@@ -2187,4 +2203,50 @@ p8
 
 # VIII
 
-# IX 
+# Partie de tableau RMSE 
+
+```{r comparaison_train_test, message=FALSE, warning=FALSE}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+perf_train_test <- data.frame(
+  Modele = c(
+    "OLS",
+    "LASSO_old",
+    "LASSO_new",
+    "Mixed_RI",
+    "Mixed_RIS"
+  ),
+  RMSE_Train = c(
+    rmse_train_lm,
+    rmse_train,          # LASSO old 
+    rmse_train_new,      # LASSO new
+    rmse_ri_train,
+    rmse_ris_train
+  ),
+  RMSE_Test = c(
+    rmse_test_lm,
+    rmse_test,           # LASSO old 
+    rmse_test_new,       # LASSO new
+    rmse_ri_test,
+    rmse_ris_test
+  )
+)
+
+# generalisation gap
+perf_train_test <- perf_train_test %>%
+  mutate(Gap = RMSE_Test - RMSE_Train) %>%
+  arrange(RMSE_Test)
+
+kable(
+  perf_train_test,
+  caption = "Comparaison des performances Train / Test (évaluation hors-échantillon)",
+  align = "lrrr"
+) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed")
+  )
+
+```
